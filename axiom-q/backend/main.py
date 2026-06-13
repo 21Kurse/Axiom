@@ -11,6 +11,11 @@ import json
 import asyncio
 import logging
 import os
+import io
+import base64
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
@@ -98,9 +103,15 @@ async def telemetry_websocket(websocket: WebSocket):
             qubit_id = payload.get("qubit_id", "Q0")
             t1_relaxation = float(payload.get("t1_relaxation", 0.0))
             phase_damping = float(payload.get("phase_damping", 0.0))
+            hardware_drift = float(payload.get("hardware_drift", 0.0))
+            pulse_amp_mod = float(payload.get("pulse_amp_mod", 1.0))
 
             try:
-                sim = await run_rabi_simulation(t1_relaxation, phase_damping)
+                sim = await run_rabi_simulation(
+                    t1_relaxation, phase_damping,
+                    drift_mhz=hardware_drift,
+                    pulse_amp_mod=pulse_amp_mod,
+                )
                 probabilities = sim["probabilities"]
                 raw_counts = sim["raw_counts"]
             except Exception as e:
@@ -114,7 +125,12 @@ async def telemetry_websocket(websocket: WebSocket):
                 "probabilities": probabilities,
             })
 
-            inputs = {"t1_relaxation": t1_relaxation, "phase_damping": phase_damping}
+            inputs = {
+                "t1_relaxation": t1_relaxation,
+                "phase_damping": phase_damping,
+                "hardware_drift": hardware_drift,
+                "pulse_amp_mod": pulse_amp_mod,
+            }
 
             # 1) Always record in memory — never blocks.
             telemetry_store.record_telemetry(qubit_id, raw_counts, probabilities, inputs)
@@ -136,6 +152,38 @@ def _probs_from_raw_counts(raw_counts: list) -> list:
         total = sum(c.values()) if c else 0
         out.append(c.get("1", 0) / total if total > 0 else 0.0)
     return out
+
+
+@app.get("/api/v1/telemetry/{qubit_id}/plot")
+async def get_telemetry_plot(qubit_id: str):
+    """
+    Dedicated telemetry route that exports the noisy Matplotlib curve 
+    as a base64 string payload for the VLM to analyze.
+    """
+    doc = telemetry_store.get_latest_telemetry(qubit_id)
+    if not doc:
+        return {"error": "No telemetry available for this qubit."}
+    
+    raw_counts = doc.get("raw_counts") or []
+    probs = doc.get("probabilities") or _probs_from_raw_counts(raw_counts)
+    
+    if not probs:
+        return {"error": "No probability data available."}
+        
+    plt.figure(figsize=(8, 4))
+    plt.plot(probs, label=f"Rabi Oscillation ({qubit_id})", color="cyan")
+    plt.title(f"Noisy Telemetry Data: {qubit_id}")
+    plt.xlabel("Drive Duration")
+    plt.ylabel("Probability P(|1>)")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close()
+    
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return {"status": "SUCCESS", "plot_base64": b64}
+
 
 
 @app.post("/api/v1/calibrate/{qubit_id}")
@@ -163,9 +211,28 @@ async def calibrate_qubit(qubit_id: str):
 
     log.info("Calibrating %s with %d probability samples.", qubit_id, len(probs))
 
+    # Generate the base64 plot to send to the VLM Proxy
+    image_base64 = None
+    if probs:
+        import io
+        import base64
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(8, 4))
+        plt.plot(probs, label=f"Rabi Oscillation ({qubit_id})", color="cyan")
+        plt.title(f"Noisy Telemetry Data: {qubit_id}")
+        plt.xlabel("Drive Duration")
+        plt.ylabel("Probability P(|1>)")
+        plt.grid(True, linestyle="--", alpha=0.5)
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight")
+        plt.close()
+        image_base64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
     # Call LiteLLM — propagate real errors if it fails
     try:
-        vlm_data = await call_nvidia_ising_model(qubit_id, probs, inputs)
+        vlm_data = await call_nvidia_ising_model(qubit_id, probs, inputs, image_base64=image_base64)
     except Exception as e:
         log.exception("LiteLLM call failed for %s: %s", qubit_id, e)
         # Log the failure to history
@@ -186,14 +253,33 @@ async def calibrate_qubit(qubit_id: str):
 
     log.info("LiteLLM returned: %s", vlm_data)
 
+    # nvidia_client now normalizes keys to canonical names
     corrections = {
         "pi_pulse_amp_offset": vlm_data.get("pi_pulse_amp_mod", 0.0),
-        "drift_compensation_mhz": vlm_data.get("drift_corrected_mhz", 0.0),
+        "drift_compensation_mhz": vlm_data.get("drift_compensation_mhz", 0.0),
     }
     confidence = vlm_data.get("confidence", 0.0)
 
-    # Compute outcome fidelity from the model's confidence
-    outcome_fidelity = float(confidence) if confidence else 0.0
+    # Compute outcome fidelity by comparing corrected vs uncorrected Rabi curves
+    # Fidelity = how much the correction restores the oscillation dynamic range
+    t1_relax = float(inputs.get("t1_relaxation", 0.0))
+    pd = float(inputs.get("phase_damping", 0.0))
+    raw_drift = float(inputs.get("hardware_drift", 0.0))
+    amp_mod = float(inputs.get("pulse_amp_mod", 1.0))
+    corrected_drift = raw_drift - corrections["drift_compensation_mhz"]
+    corrected_amp = amp_mod + corrections["pi_pulse_amp_offset"]
+
+    try:
+        from backend.quantum_engine import compute_analytical_rabi
+        uncorrected = compute_analytical_rabi(t1_relax, pd, drift_mhz=raw_drift, pulse_amp_mod=amp_mod)
+        corrected = compute_analytical_rabi(t1_relax, pd, drift_mhz=corrected_drift, pulse_amp_mod=corrected_amp)
+        uc_range = max(uncorrected) - min(uncorrected) if uncorrected else 0.0
+        c_range = max(corrected) - min(corrected) if corrected else 0.0
+        # Fidelity: ratio of corrected dynamic range to uncorrected, capped at 1.0
+        outcome_fidelity = min(1.0, c_range / uc_range) if uc_range > 0.01 else 0.0
+    except Exception:
+        # Fallback to confidence if analytical comparison fails
+        outcome_fidelity = float(confidence) if confidence else 0.0
 
     payload = {
         "status": "SUCCESS",
@@ -222,17 +308,8 @@ async def calibrate_qubit(qubit_id: str):
     except Exception as e:
         log.warning("Calibration run log failed (non-fatal): %s", e)
 
-    # Broadcast a fresh "clean" waveform (no noise) to all connected clients.
-    try:
-        sim = await run_rabi_simulation(0.0, 0.0)
-        await manager.broadcast({
-            "event": "telemetry_update",
-            "qubit_id": qubit_id,
-            "probabilities": sim["probabilities"],
-        })
-    except Exception as e:
-        log.warning("Broadcast failed (non-fatal): %s", e)
-
+    # Calibration complete. The frontend renders the corrected waveform using
+    # the active environmental noise parameters; no zero-noise override.
     return payload
 
 
