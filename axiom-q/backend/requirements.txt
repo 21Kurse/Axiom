@@ -1,0 +1,7 @@
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+qiskit>=1.0.2
+qiskit-aer>=0.14.0
+motor>=3.3.2
+numpy>=1.26.0
+python-dotenv>=1.0.0
