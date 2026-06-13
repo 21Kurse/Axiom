@@ -143,7 +143,7 @@ function TelemetryCard() {
         <StatusBadge />
       </div>
 
-      <div className="relative w-full h-[220px] bg-surface-sunken/40 pt-4 pb-1 overflow-hidden">
+      <div className="relative w-full h-[280px] bg-surface-sunken/40 pt-2 pb-1 overflow-hidden">
         {systemStatus === "CALIBRATING" && (
           <div className="absolute inset-x-0 h-32 pointer-events-none z-50 animate-scan">
             <div className="w-full h-full bg-gradient-to-b from-transparent to-neon-cyan/20 border-b-2 border-neon-cyan glow-cyan" />
@@ -499,14 +499,7 @@ function BlochSphereCard() {
 
 export default function TelemetryPanel() {
   return (
-    <div className="flex flex-col gap-4 h-full">
-      <div className="flex items-center gap-2">
-        <Activity size={18} className="text-neon-cyan" />
-        <h2 className="text-base font-bold tracking-tight text-slate-100 font-sans">
-          Live Telemetry
-        </h2>
-      </div>
-
+    <div className="flex flex-col gap-3 h-full">
       <TelemetryCard />
       <BlochSphereCard />
     </div>

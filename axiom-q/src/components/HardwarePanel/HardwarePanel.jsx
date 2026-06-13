@@ -3,13 +3,13 @@ import useQuantumStore from "../../store/useQuantumStore";
 import { SkeletonRow } from "../ui/Skeleton";
 
 const MOCK_METRICS = [
-  "T1: 102Âµs",
+  "T1: 102µs",
   "99.2%",
-  "T1: 98Âµs",
+  "T1: 98µs",
   "99.1%",
-  "T1: 110Âµs",
+  "T1: 110µs",
   "98.8%",
-  "T1: 85Âµs",
+  "T1: 85µs",
   "99.5%",
 ];
 
@@ -153,8 +153,8 @@ export default function HardwarePanel() {
             <span className="text-neon-cyan">{qubitState.amplitude.toFixed(3)}</span>
          </div>
           <div className="flex flex-col">
-            <span className="text-slate-500 text-[10px]">Tâ‚</span>
-            <span className="text-neon-cyan">{qubitState.t1_decay_value} Âµs</span>
+            <span className="text-slate-500 text-[10px]">T₁</span>
+            <span className="text-neon-cyan">{qubitState.t1_decay_value} µs</span>
          </div>
        </div>
      </div>
@@ -179,7 +179,7 @@ export default function HardwarePanel() {
         />
         <NoiseSlider
           icon={Waves}
-          label="Hardware Drift (Î”Ï‰ MHz)"
+          label="Hardware Drift (Δω MHz)"
           value={hardwareDrift}
           onChange={(v) => setHardwareDrift(v)}
           disabled={systemStatus === "CALIBRATING"}
