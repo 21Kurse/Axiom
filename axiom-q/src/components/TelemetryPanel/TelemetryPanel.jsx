@@ -13,6 +13,9 @@ import {
 import useQuantumStore from "../../store/useQuantumStore";
 import { SkeletonChart } from "../ui/Skeleton";
 
+// Must match backend quantum_engine.py DRIFT_SCALE
+const DRIFT_SCALE = 0.02; // rad/µs per MHz of drift
+
 function StatusBadge() {
   const status = useQuantumStore((s) => s.system_status);
 
@@ -70,51 +73,65 @@ function TelemetryCard() {
     const POINTS = 150;
     const DURATION = 200;
     const omega_0 = qubitState.frequency || 4.8;
-    const pulse_amp_mod_base = qubitState.amplitude || 1.0;
-    
+    const pulse_amp_mod_base = 1.0; // matches backend default, not qubitState.amplitude
+
     // Environmental Noise (Must NOT be zeroed out)
     const t1_thermal = noise.t1_thermal;
     const phase_damping = noise.phase_damping;
-    
+
     // Sliders & Corrections
     const drift_mhz = hardwareDrift;
-    const drift_corrected_mhz = corrections.drift_compensation_mhz || 0.0;
+    const drift_compensation_mhz = corrections.drift_compensation_mhz || 0.0;
     const pi_pulse_amp_offset = corrections.pi_pulse_amp_offset || 0.0;
 
     // Calculate effective physical variables
-    const delta_omega = drift_mhz - drift_corrected_mhz; // Uncalibrated drift - compensation
+    // Apply DRIFT_SCALE to convert MHz → angular frequency (matches backend)
+    const delta_omega = (drift_mhz - drift_compensation_mhz) * DRIFT_SCALE;
     const omega_drive = omega_0 - delta_omega;
     const A = pulse_amp_mod_base + pi_pulse_amp_offset;
     const T1_us = Math.max(0.1, (1 - t1_thermal) * 100);
     const noise_floor = phase_damping * 0.15;
 
+    // Qiskit telemetry data (50 points from backend simulation)
+    const qiskitData = telemetry.noisy || [];
+    const qiskitLen = qiskitData.length;
+
     const data = [];
     for (let i = 0; i < POINTS; i++) {
       const t = (i / POINTS) * DURATION;
-      
+
       // Target/Ideal analytical wave
       const ideal = pulse_amp_mod_base * Math.sin(omega_0 * t);
-      
+
       // P1(t) = A * sin((Ω_0 - Δω) * t) * e^(-t / T1) + Noise_Floor
       const envelope = Math.exp(-t / T1_us);
       let real = A * Math.sin(omega_drive * t) * envelope + noise_floor;
-      
+
+      // Map Qiskit data point to this time index
+      const qiskitIdx = Math.round((i / POINTS) * qiskitLen);
+      const Qiskit = qiskitLen > 0 && qiskitIdx < qiskitLen
+        ? parseFloat(qiskitData[qiskitIdx].toFixed(3))
+        : undefined;
+
       data.push({
         time: t.toFixed(1),
         Ideal: parseFloat(ideal.toFixed(3)),
         Real: parseFloat(real.toFixed(3)),
+        ...(Qiskit !== undefined && { Qiskit }),
       });
     }
     return data;
   }, [
     qubitState.frequency,
-    qubitState.amplitude,
+    telemetry.noisy,
     noise.t1_thermal,
     noise.phase_damping,
     hardwareDrift,
     corrections.drift_compensation_mhz,
     corrections.pi_pulse_amp_offset,
   ]);
+
+  const hasQiskitData = telemetry.noisy && telemetry.noisy.length > 0;
 
   return (
     <div className="rounded-xl border border-border-subtle bg-surface-card/80 overflow-hidden flex flex-col">
@@ -184,6 +201,17 @@ function TelemetryCard() {
                 isAnimationActive={false}
                 connectNulls
               />
+              {hasQiskitData && (
+                <Line
+                  type="monotone"
+                  dataKey="Qiskit"
+                  stroke="#39ff14"
+                  strokeWidth={1.5}
+                  dot={{ fill: "#39ff14", r: 1.5 }}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         ) : (
@@ -206,6 +234,12 @@ function TelemetryCard() {
             <span className="w-4 border-t-[2px] border-dashed border-[#A855F7] inline-block" />
             <span className="text-[10px] font-mono text-slate-400">TARGET_WAVE</span>
           </div>
+          {hasQiskitData && (
+            <div className="flex items-center gap-1.5">
+              <span className="w-4 h-[2px] bg-[#39ff14] inline-block" />
+              <span className="text-[10px] font-mono text-slate-400">QISKIT_SIM</span>
+            </div>
+          )}
         </div>
         <span className="text-[9px] font-mono text-slate-600">
           P(e) vs Drive Duration
@@ -235,6 +269,8 @@ function createTextSprite(text) {
 function BlochSphereCard() {
   const qubitState = useQuantumStore((s) => s.qubit_state);
   const canvasRef = useRef(null);
+  // Store computed state label for display
+  const stateLabelRef = useRef("|0⟩");
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -339,32 +375,37 @@ function BlochSphereCard() {
       const isCalibrated = state.system_status === "CALIBRATED";
 
       const corrections = state.agent_payload.correction_variables;
-      const driftCorrected = isCalibrated ? corrections.drift_compensation_mhz || 0 : 0;
+      const driftCompensation = isCalibrated ? corrections.drift_compensation_mhz || 0 : 0;
       const piPulseOffset = isCalibrated ? corrections.pi_pulse_amp_offset || 0 : 0;
 
       const theta0 = (qState.amplitude + piPulseOffset) * Math.PI;
       const currentDrift = state.hardware_drift || 0.0;
-      // phi0 incorporates the baseline offset, the active hardware drift (Δω), and any applied VLM corrections
-      const phi0 = ((qState.frequency - (currentDrift - driftCorrected)) - 4.8) * 10 * Math.PI;
-      
-      // Environmental Noise parameters (T1 thermal relaxation, T2 phase damping)
+      // phi0 incorporates drift with DRIFT_SCALE (matches backend)
+      const residualDrift = (currentDrift - driftCompensation) * DRIFT_SCALE;
+      const phi0 = ((qState.frequency - residualDrift) - 4.8) * 10 * Math.PI;
+
+      // Environmental Noise parameters
       const t1Factor = noise.t1_thermal;
       const pd = noise.phase_damping;
 
-      // Uncalibrated / Noisy State Matrix
+      // Bloch vector before noise
       let y_p = Math.cos(theta0);
       let x_p = Math.sin(theta0) * Math.cos(phi0);
       let z_p = Math.sin(theta0) * Math.sin(phi0);
 
-      // T1 Relaxation washes out the amplitude towards the ground state |0> (Y-axis pole)
-      y_p = y_p + (1 - y_p) * t1Factor;
-      x_p = x_p * (1 - t1Factor);
-      z_p = z_p * (1 - t1Factor);
+      // T1 Relaxation: exponential decay toward ground state |0> (Y-axis north pole)
+      // Physical: ⟨σ⟩(t) = 1 - (1 - ⟨σ⟩₀) * e^(-t/T1)
+      // Using t1Factor as the relaxation rate constant
+      const t1DecayRate = 3.0 * t1Factor; // scale factor for visible effect
+      const t1Decay = 1 - Math.exp(-t1DecayRate);
+      y_p = 1 - (1 - y_p) * (1 - t1Decay); // relax toward y=+1
+      x_p = x_p * Math.exp(-t1DecayRate);
+      z_p = z_p * Math.exp(-t1DecayRate);
 
       // Calculate wobble magnitude proportionately to the error terms
-      const driftMagnitude = Math.abs(currentDrift - driftCorrected);
+      const driftMagnitude = Math.abs((currentDrift - driftCompensation) * DRIFT_SCALE);
       const wobbleMag = (driftMagnitude * 2) + (pd * 0.3);
-      
+
       const time = Date.now() * 0.002;
       x_p += Math.sin(time) * wobbleMag;
       z_p += Math.cos(time * 1.5) * wobbleMag;
@@ -372,6 +413,15 @@ function BlochSphereCard() {
       const vector = new THREE.Vector3(x_p, y_p, z_p);
       const length = Math.max(vector.length(), 0.001);
       vector.normalize();
+
+      // Derive dynamic state label from the Bloch vector's quantization-axis projection
+      if (y_p > 0.5) {
+        stateLabelRef.current = "≡ |0⟩";
+      } else if (y_p < -0.5) {
+        stateLabelRef.current = "≡ |1⟩";
+      } else {
+        stateLabelRef.current = "≡ |ψ⟩";
+      }
 
       arrowHelper.setDirection(vector);
       arrowHelper.setLength(length, 0.2 * length, 0.1 * length);
@@ -440,7 +490,7 @@ function BlochSphereCard() {
           </span>
         </span>
         <span className="text-slate-500">
-          |ψ⟩ <span className="text-neon-green">≡ |0⟩</span>
+          |ψ⟩ <span className="text-neon-green">{stateLabelRef.current}</span>
         </span>
       </div>
     </div>

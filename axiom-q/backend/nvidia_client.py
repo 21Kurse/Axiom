@@ -36,7 +36,7 @@ MODEL_ID = os.getenv("LITELLM_MODEL", os.getenv("OPENAI_MODEL", "ising-calibrati
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("LITELLM_REQUEST_TIMEOUT_SECONDS", "60"))
 
 
-CORRECTION_KEYS = ("drift_corrected_mhz", "pi_pulse_amp_mod", "confidence")
+CORRECTION_KEYS = ("drift_compensation_mhz", "pi_pulse_amp_mod", "confidence")
 
 
 def _build_messages(qubit_id: str, probabilities: list, noise_inputs: dict) -> list[dict]:
@@ -47,13 +47,15 @@ def _build_messages(qubit_id: str, probabilities: list, noise_inputs: dict) -> l
     """
     probs_str = ", ".join(f"{p:.3f}" for p in probabilities)
 
+    hardware_drift = noise_inputs.get('hardware_drift', 0.0)
+
     system = (
         "You are a quantum hardware calibration engine. "
         "Given noisy Rabi oscillation telemetry and the injected noise parameters, "
         "compute the calibration corrections needed to restore a clean Rabi oscillation. "
         "IMPORTANT: T1 relaxation and T2 dephasing are PHYSICAL ENVIRONMENT parameters "
         "that cannot be changed by calibration. Instead, calibration adjusts the microwave "
-        "control pulse parameters: drift_corrected_mhz compensates hardware frequency drift, "
+        "control pulse parameters: drift_compensation_mhz compensates hardware frequency drift, "
         "and pi_pulse_amp_mod scales the pulse amplitude to counteract amplitude errors. "
         "You MUST respond with a single valid JSON object and nothing else "
         "(no prose, no markdown, no explanations, no code fences). "
@@ -64,7 +66,8 @@ def _build_messages(qubit_id: str, probabilities: list, noise_inputs: dict) -> l
     user = (
         f"Qubit: {qubit_id}\n"
         f"Noise inputs: t1_relaxation={noise_inputs.get('t1_relaxation', 0.0)}, "
-        f"phase_damping={noise_inputs.get('phase_damping', 0.0)}\n"
+        f"phase_damping={noise_inputs.get('phase_damping', 0.0)}, "
+        f"hardware_drift={hardware_drift} MHz\n"
         f"Raw P(|1>) telemetry across {len(probabilities)} Rabi drive steps:\n"
         f"[{probs_str}]\n\n"
         "Output JSON now:"
@@ -92,13 +95,20 @@ def _strip_code_fence(text: str) -> str:
 def _extract_by_keywords(text: str) -> dict:
     """
     Last-resort fallback: regex-extract the three correction values from prose
-    like 'drift_corrected_mhz: 0.02' or 'pi_pulse_amp_mod = 1.15'.
+    like 'drift_compensation_mhz: 0.02' or 'pi_pulse_amp_mod = 1.15'.
+    Also checks legacy key 'drift_corrected_mhz'.
     """
     out: dict = {}
+    # Try canonical keys first
     for key in CORRECTION_KEYS:
         match = re.search(rf'{re.escape(key)}\s*[:=]\s*(-?\d+(?:\.\d+)?)', text)
         if match:
             out[key] = float(match.group(1))
+    # Legacy key fallback: drift_corrected_mhz → drift_compensation_mhz
+    if "drift_compensation_mhz" not in out:
+        match = re.search(r'drift_corrected_mhz\s*[:=]\s*(-?\d+(?:\.\d+)?)', text)
+        if match:
+            out["drift_compensation_mhz"] = float(match.group(1))
     return out
 
 
@@ -135,8 +145,10 @@ def _extract_correction_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Layer 3: strict regex (no nested braces)
-    match = re.search(r'\{[^{}]*"drift_corrected_mhz"[^{}]*\}', text, re.DOTALL)
+    # Layer 3: strict regex (no nested braces) — try new key, then legacy key
+    match = re.search(r'\{[^{}]*"drift_compensation_mhz"[^{}]*\}', text, re.DOTALL)
+    if not match:
+        match = re.search(r'\{[^{}]*"drift_corrected_mhz"[^{}]*\}', text, re.DOTALL)
     if not match:
         match = re.search(r"\{[^{}]*\"pi_pulse_amp_mod\"[^{}]*\}", text, re.DOTALL)
 
@@ -169,6 +181,13 @@ def _extract_correction_json(text: str) -> dict:
     raise ValueError(f"No JSON found in model output. text={text[:400]!r}")
 
 
+def _normalize_correction_keys(data: dict) -> dict:
+    """Rename legacy 'drift_corrected_mhz' to canonical 'drift_compensation_mhz'."""
+    if "drift_corrected_mhz" in data and "drift_compensation_mhz" not in data:
+        data["drift_compensation_mhz"] = data.pop("drift_corrected_mhz")
+    return data
+
+
 def _parse_model_response(raw_response: str) -> dict:
     """Parse model response from LiteLLM (OpenAI-compatible format)."""
     response_text = raw_response.strip()
@@ -191,7 +210,7 @@ def _parse_model_response(raw_response: str) -> dict:
     if not content:
         raise ValueError("Empty content from LiteLLM.")
 
-    return _extract_correction_json(content)
+    return _normalize_correction_keys(_extract_correction_json(content))
 
 
 def _call_litellm_sync(messages: list[dict]) -> str:
@@ -234,11 +253,13 @@ async def call_nvidia_ising_model(qubit_id: str, probabilities: list, noise_inpu
     and returns parsed correction JSON.
     Raises on failure — caller must handle the exception.
     """
+    hardware_drift = noise_inputs.get('hardware_drift', 0.0)
     probs_str = ", ".join(f"{p:.3f}" for p in probabilities)
     text_content = (
         f"Qubit: {qubit_id}\n"
         f"Noise inputs: t1_relaxation={noise_inputs.get('t1_relaxation', 0.0)}, "
-        f"phase_damping={noise_inputs.get('phase_damping', 0.0)}\n"
+        f"phase_damping={noise_inputs.get('phase_damping', 0.0)}, "
+        f"hardware_drift={hardware_drift} MHz\n"
         f"Raw P(|1>) telemetry across {len(probabilities)} Rabi drive steps:\n"
         f"[{probs_str}]\n\n"
         "Output JSON now:"
@@ -253,7 +274,7 @@ async def call_nvidia_ising_model(qubit_id: str, probabilities: list, noise_inpu
         })
     
     messages = [
-        {"role": "system", "content": "You are a quantum hardware calibration engine. Respond ONLY with a valid JSON object. Keys: drift_corrected_mhz, pi_pulse_amp_mod, confidence."},
+        {"role": "system", "content": "You are a quantum hardware calibration engine. Respond ONLY with a valid JSON object. Keys: drift_compensation_mhz, pi_pulse_amp_mod, confidence."},
         {"role": "user", "content": user_message_content}
     ]
 

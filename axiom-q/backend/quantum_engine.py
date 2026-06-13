@@ -48,9 +48,12 @@ def get_rabi_circuits(drift_mhz: float = 0.0, pulse_amp_mod: float = 1.0):
     # Ω_drive = Ω_0 - Δω
     omega_drive = OMEGA_0_GHZ - (drift_mhz * DRIFT_SCALE)
 
+    # Detuned drive reduces effective Rabi rotation rate proportionally
+    rabi_ratio = omega_drive / OMEGA_0_GHZ
+
     for idx, theta_base in enumerate(thetas):
         qc = QuantumCircuit(1, 1, name=f"rabi_{idx}")
-        effective_theta = pulse_amp_mod * theta_base
+        effective_theta = pulse_amp_mod * theta_base * rabi_ratio
         qc.rx(effective_theta, 0)
         qc.measure(0, 0)
         circuits.append(qc)
@@ -142,6 +145,7 @@ async def run_rabi_simulation(
 
 def compute_analytical_rabi(
     t1_relaxation: float,
+    phase_damping: float = 0.0,
     drift_mhz: float = 0.0,
     pulse_amp_mod: float = 1.0,
     duration_us: float = 200.0,
@@ -158,8 +162,8 @@ def compute_analytical_rabi(
     t_arr = np.linspace(0, duration_us, points)
 
     omega_drive = OMEGA_0_GHZ - (drift_mhz * DRIFT_SCALE)
-    T1_us = max(100.0, 100000.0 * (1.0 - t1_relaxation))
-    noise_floor = phase_damping * 0.15 if 'phase_damping' in locals() else 0.0
+    T1_us = max(0.1, (1.0 - t1_relaxation) * 100)
+    noise_floor = phase_damping * 0.15
 
     envelope = np.exp(-t_arr / T1_us)
     p_e = pulse_amp_mod * np.sin(omega_drive * t_arr) * envelope + noise_floor
