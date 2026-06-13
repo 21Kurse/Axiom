@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* ── Axiom.Q Design Tokens ── */
+@theme {
+  --color-quantum-950: #020617;
+  --color-quantum-900: #0f172a;
+  --color-quantum-800: #1e293b;
+  --color-quantum-700: #334155;
+
+  --color-neon-green: #39ff14;
+  --color-neon-cyan: #00f0ff;
+  --color-neon-purple: #a855f7;
+  --color-neon-amber: #f59e0b;
+
+  --color-surface-card: #0f172a;
+  --color-surface-elevated: #1e293b;
+  --color-surface-sunken: #020617;
+  --color-border-subtle: #334155;
+
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace,
+    SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ── Base Dark Theme ── */
+html,
+body,
+#root {
+  @apply bg-surface-sunken text-slate-100 font-sans antialiased;
+  min-height: 100vh;
+}
+
+/* ── Neon Glow Utilities ── */
+.glow-green {
+  box-shadow:
+    0 0 6px rgba(57, 255, 20, 0.4),
+    0 0 20px rgba(57, 255, 20, 0.15);
+}
+.glow-cyan {
+  box-shadow:
+    0 0 6px rgba(0, 240, 255, 0.4),
+    0 0 20px rgba(0, 240, 255, 0.15);
+}
+.glow-purple {
+  box-shadow:
+    0 0 6px rgba(168, 85, 247, 0.4),
+    0 0 20px rgba(168, 85, 247, 0.15);
+}
+.glow-amber {
+  box-shadow:
+    0 0 6px rgba(245, 158, 11, 0.4),
+    0 0 20px rgba(245, 158, 11, 0.15);
+}
+
+/* ── Pulse animation for calibration trigger ── */
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 8px rgba(0, 240, 255, 0.5),
+      0 0 24px rgba(0, 240, 255, 0.2),
+      inset 0 0 8px rgba(0, 240, 255, 0.05);
+  }
+  50% {
+    box-shadow:
+      0 0 16px rgba(0, 240, 255, 0.7),
+      0 0 48px rgba(0, 240, 255, 0.35),
+      inset 0 0 12px rgba(0, 240, 255, 0.1);
+  }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2.5s ease-in-out infinite;
+}
+
+/* ── Terminal cursor blink ── */
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.animate-blink-cursor {
+  animation: blink-cursor 1s step-end infinite;
+}
+
+/* ── Scrollbars ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* ── Laser Scan Overlay ── */
+@keyframes scan {
+  0% {
+    top: -50%;
+  }
+  100% {
+    top: 150%;
+  }
+}
+.animate-scan {
+  animation: scan 1.5s linear infinite;
+}
