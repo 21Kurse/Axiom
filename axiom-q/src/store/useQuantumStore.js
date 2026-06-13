@@ -14,6 +14,8 @@ const sendWebSocketMessage = (state, nextNoise = null, nextQubitIndex = null) =>
         qubit_id: qubitId,
         t1_relaxation: noise.t1_thermal,
         phase_damping: noise.phase_damping,
+        hardware_drift: state.hardware_drift,
+        pulse_amp_mod: state.pulse_amp_mod,
       })
     );
   }
@@ -37,6 +39,10 @@ const useQuantumStore = create((set, get) => ({
     t1_thermal: 0.25,
     phase_damping: 0.15,
   },
+
+  /* ── Hardware Physics ── */
+  hardware_drift: 0.05,         // MHz environmental/hardware drift
+  pulse_amp_mod: 1.0,          // unitless pulse amplitude modifier
 
   /* ── Telemetry Data ── */
   telemetry_data: {
@@ -86,24 +92,29 @@ const useQuantumStore = create((set, get) => ({
 
       if (data.status === "SUCCESS" && data.qubits?.length) {
         const qubits = data.qubits;
-        const q = qubits[0];
-        set({
-          qubits,
-          qubits_loaded: true,
-          qubits_error: null,
-          selectedQubit: 0,
-          qubit_state: {
-            frequency: q.frequency,
-            amplitude: q.amplitude,
-            t1_decay_value: q.t1_decay,
-          },
-          ai_console_logs: [{ ts: Date.now(), msg: "> System online. Qubit register loaded from backend." }],
+        
+        set((state) => {
+          const isInitialLoad = !state.qubits_loaded;
+          const newSelected = isInitialLoad ? 0 : state.selectedQubit;
+          const q = qubits[newSelected] || qubits[0];
+          
+          return {
+            qubits,
+            qubits_loaded: true,
+            qubits_error: null,
+            selectedQubit: newSelected,
+            qubit_state: {
+              frequency: q.frequency,
+              amplitude: q.amplitude,
+              t1_decay_value: q.t1_decay,
+            },
+            ...(isInitialLoad && { ai_console_logs: [{ ts: Date.now(), msg: "> System online. Qubit register loaded from backend." }] })
+          };
         });
       } else {
         set({
           qubits_error: data.detail || data.reason || "Unknown error fetching qubits",
           qubits_loaded: true,
-          ai_console_logs: [{ ts: Date.now(), msg: `> Error loading qubits: ${data.detail || data.reason || "Unknown"}` }],
         });
       }
     } catch (e) {
@@ -177,6 +188,13 @@ const useQuantumStore = create((set, get) => ({
       return { noise: nextNoise };
     }),
 
+  setHardwareDrift: (value) =>
+    set((state) => {
+      const next = { ...state, hardware_drift: value };
+      sendWebSocketMessage(next);
+      return { hardware_drift: value };
+    }),
+
   startCalibration: async () => {
     const state = get();
     if (state.system_status === "CALIBRATING") return;
@@ -218,34 +236,6 @@ const useQuantumStore = create((set, get) => ({
           },
         });
 
-        // Smoothly reset noise sliders to zero
-        const s = get();
-        const startT1 = s.noise.t1_thermal;
-        const startPd = s.noise.phase_damping;
-
-        let step = 0;
-        const steps = 30;
-        const resetInterval = setInterval(() => {
-          step++;
-          const factor = 1 - (step / steps);
-
-          set((state) => ({
-            noise: {
-              ...state.noise,
-              t1_thermal: startT1 * factor,
-              phase_damping: startPd * factor,
-            }
-          }));
-
-          if (step >= steps) {
-            clearInterval(resetInterval);
-            set((state) => ({
-              noise: { ...state.noise, t1_thermal: 0.0, phase_damping: 0.0 }
-            }));
-            sendWebSocketMessage(get(), { t1_thermal: 0.0, phase_damping: 0.0 });
-          }
-        }, 16);
-
         addLog("> Calibration complete. Corrections applied.");
         addLog(`> Δf = ${corrections.drift_compensation_mhz ?? 0} MHz | ΔA = ${corrections.pi_pulse_amp_offset ?? 0}`);
       } else {
@@ -277,7 +267,7 @@ const useQuantumStore = create((set, get) => ({
   },
 
   resetCalibration: () =>
-    set({
+    set((state) => ({
       system_status: "UNCALIBRATED",
       telemetry_data: { noisy: [], clean: [] },
       ai_console_logs: [
@@ -292,7 +282,9 @@ const useQuantumStore = create((set, get) => ({
         confidence: null,
         model: "ising-calibration",
       },
-    }),
+      // NOTE: noise (t1_thermal, phase_damping) and hardware_drift are
+      // preserved across reset — they represent real physical environment.
+    })),
 }));
 
 export default useQuantumStore;

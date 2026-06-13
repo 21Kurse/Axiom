@@ -51,6 +51,10 @@ def _build_messages(qubit_id: str, probabilities: list, noise_inputs: dict) -> l
         "You are a quantum hardware calibration engine. "
         "Given noisy Rabi oscillation telemetry and the injected noise parameters, "
         "compute the calibration corrections needed to restore a clean Rabi oscillation. "
+        "IMPORTANT: T1 relaxation and T2 dephasing are PHYSICAL ENVIRONMENT parameters "
+        "that cannot be changed by calibration. Instead, calibration adjusts the microwave "
+        "control pulse parameters: drift_corrected_mhz compensates hardware frequency drift, "
+        "and pi_pulse_amp_mod scales the pulse amplitude to counteract amplitude errors. "
         "You MUST respond with a single valid JSON object and nothing else "
         "(no prose, no markdown, no explanations, no code fences). "
         "Use exactly these three keys with float values: "
@@ -224,16 +228,39 @@ def _call_litellm_sync(messages: list[dict]) -> str:
         raise RuntimeError(f"LiteLLM connection refused at {LITELLM_URL}: {e.reason}") from e
 
 
-async def call_nvidia_ising_model(qubit_id: str, probabilities: list, noise_inputs: dict) -> dict:
+async def call_nvidia_ising_model(qubit_id: str, probabilities: list, noise_inputs: dict, image_base64: str = None) -> dict:
     """
-    Main async entry point. Sends telemetry data to the NVIDIA Ising
-    calibration model via LiteLLM and returns parsed correction JSON.
+    Main async entry point. Sends telemetry data (and image) to the local VLM proxy
+    and returns parsed correction JSON.
     Raises on failure — caller must handle the exception.
     """
-    messages = _build_messages(qubit_id, probabilities, noise_inputs)
+    probs_str = ", ".join(f"{p:.3f}" for p in probabilities)
+    text_content = (
+        f"Qubit: {qubit_id}\n"
+        f"Noise inputs: t1_relaxation={noise_inputs.get('t1_relaxation', 0.0)}, "
+        f"phase_damping={noise_inputs.get('phase_damping', 0.0)}\n"
+        f"Raw P(|1>) telemetry across {len(probabilities)} Rabi drive steps:\n"
+        f"[{probs_str}]\n\n"
+        "Output JSON now:"
+    )
+    
+    # Send both text and image if available
+    user_message_content = [{"type": "text", "text": text_content}]
+    if image_base64:
+        user_message_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{image_base64}"}
+        })
+    
+    messages = [
+        {"role": "system", "content": "You are a quantum hardware calibration engine. Respond ONLY with a valid JSON object. Keys: drift_corrected_mhz, pi_pulse_amp_mod, confidence."},
+        {"role": "user", "content": user_message_content}
+    ]
 
     loop = asyncio.get_running_loop()
     raw_response = await loop.run_in_executor(None, _call_litellm_sync, messages)
+    
+    # Process the proxy's response using the robust regex layers
     result = _parse_model_response(raw_response)
     log.info("NVIDIA Ising model returned: %s", result)
     return result
