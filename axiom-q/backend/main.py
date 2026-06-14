@@ -132,7 +132,7 @@ async def _run_prosthetic_cycle(pot_value: float) -> None:
         from backend.prosthetics import main as prosthetics_main
         await prosthetics_main.run_one_cycle(
             pot_value=pot_value,
-            seed=42,
+            seed=None,
             broadcast=_prosthetic_broadcast,
             save_gif=False,
             frame_interval_s=0.05,
@@ -414,19 +414,25 @@ async def calibrate_qubit(qubit_id: str):
         "pi_pulse_amp_offset": vlm_data.get("pi_pulse_amp_mod", 0.0),
         "drift_compensation_mhz": vlm_data.get("drift_compensation_mhz", 0.0),
     }
-    confidence = vlm_data.get("confidence", 0.0)
 
-    # Compute outcome fidelity by comparing corrected vs uncorrected Rabi curves
-    # Fidelity = how much the correction restores the oscillation dynamic range
     t1_relax = float(inputs.get("t1_relaxation", 0.0))
     pd = float(inputs.get("phase_damping", 0.0))
     raw_drift = float(inputs.get("hardware_drift", 0.0))
     amp_mod = float(inputs.get("pulse_amp_mod", 1.0))
+
+    # The ising-calibration model emits a near-constant confidence regardless of
+    # input, so derive a data-driven confidence from the signal physics instead:
+    # how much Rabi oscillation visibility survives the current T1/dephasing
+    # environment (clean signal → ~1.0, fully decohered → ~0.0).
+    from backend.quantum_engine import compute_analytical_rabi, signal_confidence
+    confidence = signal_confidence(t1_relax, pd, drift_mhz=raw_drift, pulse_amp_mod=amp_mod)
+
+    # Compute outcome fidelity by comparing corrected vs uncorrected Rabi curves
+    # Fidelity = how much the correction restores the oscillation dynamic range
     corrected_drift = raw_drift - corrections["drift_compensation_mhz"]
     corrected_amp = amp_mod + corrections["pi_pulse_amp_offset"]
 
     try:
-        from backend.quantum_engine import compute_analytical_rabi
         uncorrected = compute_analytical_rabi(t1_relax, pd, drift_mhz=raw_drift, pulse_amp_mod=amp_mod)
         corrected = compute_analytical_rabi(t1_relax, pd, drift_mhz=corrected_drift, pulse_amp_mod=corrected_amp)
         uc_range = max(uncorrected) - min(uncorrected) if uncorrected else 0.0

@@ -169,6 +169,42 @@ def compute_analytical_rabi(
     rabi_ratio = omega_drive / OMEGA_0_GHZ
     effective_theta = pulse_amp_mod * theta_base * rabi_ratio
 
+    envelope = np.exp(-t_arr / T1_us)
     p_e = (np.sin(effective_theta / 2) ** 2) * envelope + noise_floor
 
     return p_e.tolist()
+
+
+def signal_confidence(
+    t1_relaxation: float,
+    phase_damping: float = 0.0,
+    drift_mhz: float = 0.0,
+    pulse_amp_mod: float = 1.0,
+) -> float:
+    """
+    Data-driven calibration confidence in [0, 1], derived from how much usable
+    Rabi oscillation visibility survives the current noise environment.
+
+    The ising-calibration model emits a near-constant confidence regardless of
+    input, so we score the signal physics instead: visibility relative to a
+    clean (noise-free) reference. A pristine oscillation scores ~1.0; a fully
+    decohered (flat) signal scores ~0.0.
+
+    T1 relaxation damps the oscillation amplitude over the drive window (folded
+    in via the analytical envelope). T2 dephasing also destroys visibility, but
+    the analytical model represents it as a DC offset that leaves the max-min
+    range unchanged — so its visibility cost is applied explicitly here.
+    """
+    curve = compute_analytical_rabi(
+        t1_relaxation, phase_damping, drift_mhz=drift_mhz, pulse_amp_mod=pulse_amp_mod
+    )
+    baseline = compute_analytical_rabi(0.0, 0.0, drift_mhz=0.0, pulse_amp_mod=pulse_amp_mod)
+
+    cur_range = (max(curve) - min(curve)) if curve else 0.0
+    base_range = (max(baseline) - min(baseline)) if baseline else 0.0
+    t1_visibility = cur_range / base_range if base_range > 1e-9 else 0.0
+
+    dephasing_visibility = 1.0 - max(0.0, min(1.0, phase_damping))
+
+    confidence = t1_visibility * dephasing_visibility
+    return round(max(0.0, min(1.0, confidence)), 3)
