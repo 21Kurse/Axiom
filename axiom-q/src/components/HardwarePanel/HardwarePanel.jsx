@@ -70,7 +70,7 @@ function QubitGrid() {
                 border text-xs font-mono font-bold transition-all duration-200
                 ${
                   active
-                    ? "bg-[#111827] border-2 border-[#00F0FF] text-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.4)]"
+                    ? "bg-[#111111] border-2 border-[#00F0FF] text-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.4)]"
                     : "bg-surface-sunken/60 border-border-subtle text-slate-400 hover:border-slate-500 hover:text-slate-200"
                 }
                 disabled:opacity-40 disabled:cursor-not-allowed
@@ -97,12 +97,12 @@ function NoiseSlider({ icon: Icon, label, value, onChange, disabled }) {
           <Icon size={13} className="text-slate-500" />
           {label}
        </span>
-        <span className="font-mono text-[#00f0ff]">{value.toFixed(2)}</span>
+        <span className="font-mono text-[#b8c5d1]">{value.toFixed(2)}</span>
      </div>
       <div className="relative h-3 flex items-center">
         <div className="absolute w-full h-[2px] bg-[rgba(255,255,255,0.08)] rounded-full pointer-events-none" />
         <div
-          className="absolute h-[2px] bg-[#00f0ff] rounded-full pointer-events-none"
+          className="absolute h-[2px] bg-[#b8c5d1] rounded-full pointer-events-none"
           style={{ width: `${value * 100}%` }}
         />
         <input
