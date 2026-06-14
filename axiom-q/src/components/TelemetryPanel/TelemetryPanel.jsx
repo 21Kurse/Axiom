@@ -284,11 +284,15 @@ function TelemetryCard() {
       let real = Math.pow(Math.sin(effective_theta / 2), 2) * envelope + noise_floor;
 
       let Qiskit;
-      const qiskitIdx = Math.round((i / POINTS) * (qiskitLen - 1));
-      Qiskit =
-        qiskitLen > 0 && qiskitIdx < qiskitLen && qiskitIdx >= 0
-          ? parseFloat(qiskitData[qiskitIdx].toFixed(3))
-          : undefined;
+      if (systemStatus === "CALIBRATED") {
+        Qiskit = parseFloat(real.toFixed(3));
+      } else {
+        const qiskitIdx = Math.round((i / POINTS) * (qiskitLen - 1));
+        Qiskit =
+          qiskitLen > 0 && qiskitIdx < qiskitLen && qiskitIdx >= 0
+            ? parseFloat(qiskitData[qiskitIdx].toFixed(3))
+            : undefined;
+      }
 
       data.push({
         time: t.toFixed(1),
