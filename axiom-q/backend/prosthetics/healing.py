@@ -12,8 +12,15 @@ healed grid.
 from __future__ import annotations
 
 import logging
+import json
+import serial
+import time
+import os
 import numpy as np
 from typing import Any
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from backend.prosthetics.heatmap import RYG_CMAP, VMIN, VMAX
 
 log = logging.getLogger("axiom-q.prosthetics.healing")
 
@@ -81,3 +88,94 @@ def heal(
     log.info("Applied %d / %d corrections (confidence=%.2f).",
              applied, len(cell_corrections), confidence)
     return healed
+
+
+def send_to_arduino(diagnosis: dict[str, Any], port: str = "/dev/tty.usbmodem14101", baudrate: int = 9600):
+    """
+    Send VLM cell corrections down the USB serial port to the Arduino.
+    """
+    cell_corrections = diagnosis.get("cell_corrections", {})
+    if not cell_corrections:
+        return
+        
+    try:
+        log.info("Opening serial port %s at %d baud...", port, baudrate)
+        ser = serial.Serial(port, baudrate, timeout=1)
+        time.sleep(2) # Wait for Arduino to reset
+        
+        for cell_id, target_kpa in cell_corrections.items():
+            # Standardize cell_id format for Arduino (e.g., "03" or "23")
+            cleaned = str(cell_id).strip("[]() ")
+            parts = cleaned.replace("_", ",").split(",")
+            if len(parts) == 2:
+                r, c = parts[0].strip(), parts[1].strip()
+                formatted_id = f"{r}{c}"
+            else:
+                formatted_id = cleaned
+                
+            cmd = json.dumps({"cell_id": formatted_id, "target_kpa": float(target_kpa)})
+            ser.write((cmd + "\n").encode("utf-8"))
+            log.info("Sent to Arduino: %s", cmd)
+            time.sleep(0.2) # 200ms delay between commands
+            
+        ser.close()
+    except Exception as e:
+        log.warning("Could not send to Arduino on %s: %s", port, e)
+
+
+def create_healing_gif(drifted: np.ndarray, healed: np.ndarray, out_path: str = "healing.gif") -> str:
+    """
+    Create an animated GIF showing the 6x6 pressure grid updating cell-by-cell
+    from the drifted state back to the target/healed state over 20 frames.
+    """
+    fig, ax = plt.subplots(figsize=(6, 6))
+    fig.patch.set_facecolor("#0a0e14")
+    ax.set_facecolor("#0f1923")
+    ax.set_title("Autonomous Socket Healing", color="white", fontsize=14, pad=15)
+    ax.set_xlabel("Column", fontsize=9, color="#94a3b8")
+    ax.set_ylabel("Row", fontsize=9, color="#94a3b8")
+    ax.tick_params(colors="#64748b", labelsize=8)
+    
+    im = ax.imshow(drifted, cmap=RYG_CMAP.reversed(), vmin=VMIN, vmax=VMAX)
+    
+    # Store text objects to update them
+    texts = []
+    rows, cols = drifted.shape
+    for r in range(rows):
+        row_texts = []
+        for c in range(cols):
+            val = drifted[r, c]
+            text_color = "#0f172a" if val < 14.0 else "#ffffff"
+            t = ax.text(c, r, f"{val:.1f}", ha="center", va="center", color=text_color, fontsize=10, fontweight="bold")
+            row_texts.append(t)
+        texts.append(row_texts)
+        
+    frames = 20
+    
+    def update(frame):
+        # Progress from 0.0 to 1.0
+        progress = frame / float(frames - 1)
+        current_grid = drifted + (healed - drifted) * progress
+        
+        im.set_array(current_grid)
+        
+        for r in range(rows):
+            for c in range(cols):
+                val = current_grid[r, c]
+                text_color = "#0f172a" if val < 14.0 else "#ffffff"
+                texts[r][c].set_text(f"{val:.1f}")
+                texts[r][c].set_color(text_color)
+                
+        return [im]
+        
+    anim = FuncAnimation(fig, update, frames=frames, interval=100, blit=False)
+    
+    try:
+        anim.save(out_path, writer=PillowWriter(fps=10))
+        log.info("Saved healing animation -> %s", os.path.abspath(out_path))
+    except Exception as e:
+        log.error("Failed to save GIF: %s", e)
+    finally:
+        plt.close(fig)
+        
+    return os.path.abspath(out_path)
