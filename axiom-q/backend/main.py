@@ -469,6 +469,21 @@ async def calibrate_qubit(qubit_id: str):
     return payload
 
 
+from fastapi.responses import FileResponse
+
+@app.get("/api/v1/prosthetics/heatmap")
+async def get_prosthetics_heatmap():
+    """Serve the generated heatmap image from the prosthetics package."""
+    path = os.path.join(os.path.dirname(__file__), "prosthetics", "heatmap_noisy.png")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="image/png")
+    return {
+        "status": "ERROR",
+        "reason": "not_found",
+        "detail": "Heatmap image not yet generated. Drag the slider to run a live calibration cycle first."
+    }
+
+
 @app.get("/api/v1/qubits")
 async def get_qubits():
     """Return all qubit configurations from MongoDB."""

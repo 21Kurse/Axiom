@@ -17,6 +17,7 @@ import ProstheticMesh from "../ProstheticMesh/ProstheticMesh";
 
 // Must match backend quantum_engine.py DRIFT_SCALE
 const DRIFT_SCALE = 0.02; // rad/µs per MHz of drift
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 function StatusBadge() {
   const status = useQuantumStore((s) => s.system_status);
@@ -124,12 +125,13 @@ function ProstheticDiagnosisPanel() {
   const diagnosis = useQuantumStore((s) => s.prosthetic.diagnosis);
   const cellsPhase = useQuantumStore((s) => s.prosthetic.cells_phase);
   const cells = useQuantumStore((s) => s.prosthetic.cells);
+  const status = useQuantumStore((s) => s.prosthetic.status);
 
   if (!diagnosis || !cells) {
     return (
       <div className="text-[9px] font-mono text-slate-600 uppercase tracking-widest leading-snug">
         Drag the lever past the FIRE line to issue a live calibration pulse.
-     </div>
+      </div>
     );
   }
 
@@ -147,25 +149,41 @@ function ProstheticDiagnosisPanel() {
         <span className="text-slate-400">PHASE</span>
         <span className="text-neon-cyan uppercase">
           {cellsPhase || "—"}
-       </span>
-     </div>
+        </span>
+      </div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-slate-400">CORRECTIONS</span>
-        <span className="text-neon-cyan">{n}</span>     </div>
+        <span className="text-neon-cyan">{n}</span>
+      </div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-slate-400">CONFIDENCE</span>
         <span className="text-neon-green">{confidence.toFixed(0)}%</span>
-     </div>
+      </div>
       <div className="flex items-center justify-between gap-2">
         <span className="text-slate-400">MEAN kPa</span>
         <span className="text-neon-amber">{meanKpa.toFixed(1)}</span>
-     </div>
+      </div>
       {diagnosis.explanation && (
         <div className="mt-1 text-slate-500 leading-snug">
           <span className="text-neon-purple">›</span> {diagnosis.explanation}
-       </div>
+        </div>
       )}
-   </div>
+
+      {/* Show the actual generated heatmap image in real-time */}
+      <div className="mt-3 border border-[rgba(255,255,255,0.08)] rounded overflow-hidden bg-slate-950/60">
+        <div className="bg-[rgba(255,255,255,0.03)] px-2 py-1.5 border-b border-[rgba(255,255,255,0.06)] text-[8px] font-bold text-slate-400 tracking-wider">
+          LIVE VLM SCAN HEATMAP
+        </div>
+        <img
+          src={`${API_BASE}/api/v1/prosthetics/heatmap?t=${status}-${cellsPhase}-${cells[0]?.kpa.toFixed(1)}`}
+          className="w-full h-auto object-cover block"
+          alt="Limb Shift Heatmap"
+          onError={(e) => {
+            e.target.style.display = "none";
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
