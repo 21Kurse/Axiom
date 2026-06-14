@@ -73,7 +73,7 @@ export default function ProstheticPot() {
           ref={trackRef}
           onPointerDown={onPointerDown}
           className="relative w-9 h-full cursor-pointer rounded-sm
-                     bg-[#0a0e14] border border-[rgba(255,255,255,0.10)]
+                     bg-[#121212] border border-[rgba(255,255,255,0.10)]
                      shadow-[inset_0_0_8px_rgba(0,0,0,0.6)] overflow-hidden"
           style={{ touchAction: "none" }}
         >

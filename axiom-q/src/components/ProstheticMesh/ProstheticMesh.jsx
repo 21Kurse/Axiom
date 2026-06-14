@@ -66,7 +66,7 @@ export default function ProstheticMesh() {
     // Limb-socket backdrop (dome under the cell grid)
     const baseGeo = new THREE.CylinderGeometry(3.2, 3.2, 0.4, 64);
     const baseMat = new THREE.MeshBasicMaterial({
-      color: 0x0a0e14,
+      color: 0x121212,
       transparent: true,
       opacity: 0.85,
     });

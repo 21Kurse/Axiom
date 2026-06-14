@@ -70,7 +70,7 @@ function QubitGrid() {
                 border text-xs font-mono font-bold transition-all duration-200
                 ${
                   active
-                    ? "bg-[#111827] border-2 border-[#00F0FF] text-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.4)]"
+                    ? "bg-[#111111] border-2 border-[#00F0FF] text-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.4)]"
                     : "bg-surface-sunken/60 border-border-subtle text-slate-400 hover:border-slate-500 hover:text-slate-200"
                 }
                 disabled:opacity-40 disabled:cursor-not-allowed

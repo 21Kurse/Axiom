@@ -227,7 +227,7 @@ function ProstheticLiveCard() {
        </div>
 
         {/* Live diagnosis / inspector */}
-        <div className="bg-[#0a0e14] rounded-sm border border-[rgba(255,255,255,0.06)] p-3 overflow-auto">
+        <div className="bg-[#121212] rounded-sm border border-[rgba(255,255,255,0.06)] p-3 overflow-auto">
           <div className="text-[9px] font-mono text-slate-500 uppercase tracking-widest mb-2">
             Diagnosis inspector
          </div>
@@ -365,8 +365,8 @@ function TelemetryCard() {
               />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: "#0f172a",
-                  border: "1px solid #1e293b",
+                  backgroundColor: "#1c1c1c",
+                  border: "1px solid #262626",
                   borderRadius: "8px",
                   fontSize: "10px",
                 }}
@@ -554,7 +554,7 @@ function BlochSphereCard() {
 
     const boxGeo = new THREE.BoxGeometry(2.2, 2.2, 2.2);
     const boxMat = new THREE.MeshBasicMaterial({
-      color: 0x111827,
+      color: 0x111111,
       transparent: true,
       opacity: 0.3,
       wireframe: true,
