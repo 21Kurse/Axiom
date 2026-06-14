@@ -35,8 +35,10 @@ log = logging.getLogger("axiom-q")
 async def lifespan(app: FastAPI):
     # Startup — connect to MongoDB
     await db.startup()
+
     yield
-    # Shutdown — close MongoDB client
+
+    # Shutdown
     await db.shutdown()
 
 
@@ -542,6 +544,8 @@ async def health_check():
         "litellm_reachable": litellm_reachable,
         "litellm_url": litellm_url,
     }
+
+
 
 
 if __name__ == "__main__":

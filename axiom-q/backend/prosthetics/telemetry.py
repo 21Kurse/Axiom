@@ -24,8 +24,10 @@ from qiskit_aer.noise import NoiseModel, thermal_relaxation_error
 GRID_ROWS = 6
 GRID_COLS = 6
 NUM_CELLS = GRID_ROWS * GRID_COLS          # 36 cells → 36 qubits
-PRESSURE_MIN_KPA = 8.0
-PRESSURE_MAX_KPA = 12.0
+
+# Fallback pressure range (used when the Arduino is not connected).
+DEFAULT_PRESSURE_MIN_KPA = 8.0
+DEFAULT_PRESSURE_MAX_KPA = 12.0
 
 # At pot_value == 0 the drift is gentle (the patient is at rest);
 # at pot_value == 1 the drift is severe (compartment-syndrome style).
@@ -48,13 +50,10 @@ T_GATE_NS = 50.0
 
 
 def generate_target_array(seed: int | None = None) -> np.ndarray:
-    """
-    Create a 6×6 target pressure array with values uniformly sampled
-    from [PRESSURE_MIN_KPA, PRESSURE_MAX_KPA].
-    """
+    """Create a 6×6 target pressure array with values uniformly sampled from [8, 12] kPa."""
+    pmin, pmax = DEFAULT_PRESSURE_MIN_KPA, DEFAULT_PRESSURE_MAX_KPA
     rng = np.random.default_rng(seed)
-    return rng.uniform(PRESSURE_MIN_KPA, PRESSURE_MAX_KPA,
-                       size=(GRID_ROWS, GRID_COLS))
+    return rng.uniform(pmin, pmax, size=(GRID_ROWS, GRID_COLS))
 
 
 def _build_thermal_noise_model(t1_factor: float = 0.5,

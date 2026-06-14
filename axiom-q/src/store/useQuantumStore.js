@@ -88,6 +88,9 @@ const useQuantumStore = create((set, get) => ({
     cells_frame: 0,
     diagnosis: null,           // { confidence, explanation, affected_cells, cell_corrections, n_corrections }
     last_pot_ts: 0,
+    pot2_value: 0.5,           // Comfort Target knob [0, 1]
+    target_pressure_min_kpa: 8.0,
+    target_pressure_max_kpa: 12.0,
   },
 
   /* ── JSON Payload Inspector ── */
@@ -462,6 +465,11 @@ const useQuantumStore = create((set, get) => ({
       );
       set((s) => ({ prosthetic: { ...s.prosthetic, pot_value: clamped } }));
     }
+  },
+
+  sendPot2Value: (value) => {
+    const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+    set((s) => ({ prosthetic: { ...s.prosthetic, pot2_value: clamped } }));
   },
 
   resetProstheticCycle: () => {

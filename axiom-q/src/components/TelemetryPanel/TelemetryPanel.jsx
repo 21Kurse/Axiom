@@ -1,5 +1,5 @@
 import { Activity, Box, HeartPulse } from "lucide-react";
-import { useMemo, useEffect, useRef } from "react";
+import { useMemo, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import {
   LineChart,
@@ -126,6 +126,18 @@ function ProstheticDiagnosisPanel() {
   const cellsPhase = useQuantumStore((s) => s.prosthetic.cells_phase);
   const cells = useQuantumStore((s) => s.prosthetic.cells);
   const status = useQuantumStore((s) => s.prosthetic.status);
+  const targetMin = useQuantumStore((s) => s.prosthetic.target_pressure_min_kpa);
+  const targetMax = useQuantumStore((s) => s.prosthetic.target_pressure_max_kpa);
+  const [zoomed, setZoomed] = useState(false);
+
+  useEffect(() => {
+    if (!zoomed) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setZoomed(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomed]);
 
   if (!diagnosis || !cells) {
     return (
@@ -142,6 +154,10 @@ function ProstheticDiagnosisPanel() {
     const vals = cells.map((c) => c.kpa);
     return vals.reduce((a, b) => a + b, 0) / vals.length;
   })();
+
+  const heatmapSrc = `${API_BASE}/api/v1/prosthetics/heatmap?t=${status}-${cellsPhase}-${cells[0]?.kpa.toFixed(
+    1
+  )}`;
 
   return (
     <div className="flex flex-col gap-1.5 font-mono text-[10px]">
@@ -163,6 +179,12 @@ function ProstheticDiagnosisPanel() {
         <span className="text-slate-400">MEAN kPa</span>
         <span className="text-neon-amber">{meanKpa.toFixed(1)}</span>
       </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-slate-400">TARGET kPa</span>
+        <span className="text-neon-cyan">
+          {targetMin.toFixed(1)}–{targetMax.toFixed(1)}
+        </span>
+      </div>
       {diagnosis.explanation && (
         <div className="mt-1 text-slate-500 leading-snug">
           <span className="text-neon-purple">›</span> {diagnosis.explanation}
@@ -170,19 +192,60 @@ function ProstheticDiagnosisPanel() {
       )}
 
       {/* Show the actual generated heatmap image in real-time */}
-      <div className="mt-3 border border-[rgba(255,255,255,0.08)] rounded overflow-hidden bg-slate-950/60">
-        <div className="bg-[rgba(255,255,255,0.03)] px-2 py-1.5 border-b border-[rgba(255,255,255,0.06)] text-[8px] font-bold text-slate-400 tracking-wider">
-          LIVE VLM SCAN HEATMAP
+      <button
+        type="button"
+        onClick={() => setZoomed(true)}
+        className="mt-3 block w-full text-left border border-[rgba(255,255,255,0.08)] rounded overflow-hidden bg-slate-950/60 cursor-zoom-in group hover:border-neon-cyan/40 transition-colors"
+        aria-label="Expand VLM scan heatmap"
+      >
+        <div className="bg-[rgba(255,255,255,0.03)] px-2 py-1.5 border-b border-[rgba(255,255,255,0.06)] text-[8px] font-bold text-slate-400 tracking-wider flex items-center justify-between">
+          <span>LIVE VLM SCAN HEATMAP</span>
+          <span className="text-neon-cyan/70 normal-case font-normal">
+            click to expand ⤢
+          </span>
         </div>
         <img
-          src={`${API_BASE}/api/v1/prosthetics/heatmap?t=${status}-${cellsPhase}-${cells[0]?.kpa.toFixed(1)}`}
-          className="w-full h-auto object-cover block"
+          src={heatmapSrc}
+          className="w-full h-auto object-cover block transition-opacity group-hover:opacity-80"
           alt="Limb Shift Heatmap"
           onError={(e) => {
             e.target.style.display = "none";
           }}
         />
-      </div>
+      </button>
+
+      {zoomed && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-sm p-6"
+          onClick={() => setZoomed(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="relative max-w-[95vw] max-h-[95vh] rounded-lg border border-[rgba(255,255,255,0.12)] bg-[#0a0e14] shadow-2xl overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgba(255,255,255,0.08)]">
+              <span className="text-[10px] font-bold font-mono text-slate-300 tracking-wider uppercase">
+                VLM Scan Heatmap — Pressure Grid (kPa)
+              </span>
+              <button
+                type="button"
+                onClick={() => setZoomed(false)}
+                className="text-slate-400 hover:text-neon-red text-sm font-mono px-2 leading-none"
+                aria-label="Close heatmap"
+              >
+                ✕
+              </button>
+            </div>
+            <img
+              src={heatmapSrc}
+              className="max-w-full max-h-[85vh] object-contain block"
+              alt="Limb Shift Heatmap (expanded)"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
