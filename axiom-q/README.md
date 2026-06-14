@@ -1,6 +1,6 @@
 # Axiom.Q — Autonomous Quantum Calibration Dashboard
 
-Real-time quantum calibration dashboard with NVIDIA Ising-model-powered analysis via LiteLLM.
+A real-time dashboard where an AI agent autonomously diagnoses and corrects hardware drift — first on a simulated **superconducting qubit**, then on a **quantum-stabilised prosthetic socket**. Powered by Qiskit Aer simulation and an NVIDIA Ising-model agent routed through LiteLLM.
 
 ```
 ┌──────────────────┐      WebSocket       ┌─────────────────────────┐      HTTP      ┌────────────┐     HTTPS     ┌────────────┐
@@ -9,6 +9,48 @@ Real-time quantum calibration dashboard with NVIDIA Ising-model-powered analysis
 └──────────────────┘                      │  + MongoDB (port 27017) │                └────────────┘                └────────────┘
                                          └─────────────────────────┘
 ```
+
+---
+
+## What it does
+
+Quantum hardware **drifts** — qubit frequencies wander, control pulses go off-calibration, and a device that worked an hour ago quietly stops behaving. Today, fixing that means a human expert manually re-tuning parameters. **Axiom.Q closes that loop automatically:** it measures the drift, hands a visualisation to an AI agent, and applies the agent's corrections live — no human in the loop.
+
+The dashboard demonstrates this autonomous calibration loop on two fronts:
+
+### 1. Quantum calibration (the core loop)
+
+- A **Qiskit Aer** simulation runs a Rabi oscillation sweep on a superconducting qubit, with live **noise sliders** (T1 thermal relaxation, phase damping) that inject realistic decoherence.
+- The telemetry streams to the UI in real time over WebSocket and is plotted against the ideal target waveform, alongside a **3D Bloch sphere** (Three.js/WebGL) that wobbles as drift and noise grow.
+- Clicking **Run Autonomous Calibration** sends the noisy telemetry to an **NVIDIA Ising-model agent** (via a LiteLLM OpenAI-compatible proxy). The agent returns drift compensation and π-pulse amplitude corrections with a confidence score.
+- The dashboard applies the corrections, the waveform snaps back toward ideal, and the run is logged to MongoDB.
+
+### 2. Quantum-prosthetic socket demo (the applied loop)
+
+The same drift-and-correct idea, made tangible: a prosthetic limb socket whose **36 pressure cells** must stay in a comfortable kPa band, modelled as a quantum system that drifts out of calibration.
+
+- A **36-cell socket mesh** (Three.js) renders live cell pressures on a green→red comfort ramp.
+- Dragging the **lever past the FIRE line** injects quantum drift into the socket, pushing cells out of their target pressure range.
+- The backend renders a **Matplotlib pressure-grid heatmap** (side-by-side *target* vs *drifted* 6×6 grids) and feeds it as a base64 image to a **vision-language model (VLM)** through LiteLLM.
+- The VLM "scans" the heatmap, diagnoses which cells deviate, and returns **per-cell corrections + an explanation + confidence** — shown live in the diagnosis inspector. Click the **LIVE VLM SCAN HEATMAP** panel to open the full Matplotlib grid.
+- A **healing** pass animates the socket back into the comfort band, and every cycle is written to a **MongoDB ledger** (with an optional comfort-history timeline).
+
+### Why it's interesting
+
+- **Autonomous, not assistive** — the AI agent makes and applies the correction; the human just watches.
+- **Vision-in-the-loop** — the prosthetic path uses a real VLM reading a rendered heatmap, not just numbers, mirroring how a clinician would eyeball a pressure map.
+- **Real quantum simulation** — drift, decoherence, and Rabi dynamics come from Qiskit Aer, not faked curves.
+- **Fully real-time** — WebSocket streaming end to end, so every slider nudge and lever drag updates the physics instantly.
+
+### Tech stack
+
+| Layer | Tech |
+|---|---|
+| Frontend | React + Vite, Zustand, Recharts, Three.js (WebGL), Tailwind |
+| Backend | FastAPI, WebSockets, Qiskit + Qiskit Aer, Matplotlib, NumPy |
+| AI agent | NVIDIA NIM Ising-model + VLM, routed via a LiteLLM OpenAI-compatible proxy |
+| Storage | MongoDB (calibration history + prosthetic ledger) |
+| Hardware (optional) | Arduino servo sketch + serial bridge for a physical socket demo |
 
 ---
 
