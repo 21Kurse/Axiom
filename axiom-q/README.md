@@ -4,7 +4,7 @@ Real-time quantum calibration dashboard with NVIDIA Ising-model-powered analysis
 
 ```
 ┌──────────────────┐      WebSocket       ┌─────────────────────────┐      HTTP      ┌────────────┐     HTTPS     ┌────────────┐
-│  Vite + React UI │ ───────────────────► │  FastAPI (port 8000)    │ ────────────► │   LiteLLM  │ ────────────► │  NVIDIA    │
+│  Vite + React UI │ ───────────────────► │  FastAPI (port 8081)    │ ────────────► │   LiteLLM  │ ────────────► │  NVIDIA    │
 │  (port 5173)     │ ◄──── HTTP REST ──── │  + Qiskit Aer sim       │ ◄──────────── │ (port 4000)│ ◄──────────── │  NIM API   │
 └──────────────────┘                      │  + MongoDB (port 27017) │                └────────────┘                └────────────┘
                                          └─────────────────────────┘
@@ -24,15 +24,19 @@ Real-time quantum calibration dashboard with NVIDIA Ising-model-powered analysis
 ### 2. Backend
 
 ```bash
-cd axiom-q/backend
-pip install -r requirements.txt
-cp .env.example .env       # edit values if needed
+cd axiom-q
+pip install -r backend/requirements.txt
+cp backend/.env.example backend/.env       # edit values if needed
 
-# From repo root (axiom-q/)
-uvicorn backend.main:app --reload --port 8000
+# IMPORTANT: run from axiom-q/ (not backend/), and use port 8081
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8081
 ```
 
-Backend listens on `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+Backend listens on `http://localhost:8081`. Interactive docs at `http://localhost:8081/docs`.
+
+> **Two things that bite people:**
+> - **Run from `axiom-q/`, not `axiom-q/backend/`** — otherwise you get `ModuleNotFoundError: No module named 'backend'`.
+> - **Port must be `8081`.** The frontend `.env` hardcodes `http://localhost:8081` for the REST API and both WebSockets. The `--port` flag overrides `BACKEND_PORT` in `backend/.env`, so pass `8081` explicitly (or the live heatmap and telemetry won't load).
 
 ### 3. Frontend
 
@@ -61,17 +65,18 @@ Every value lives in `.env` — no hardcoded secrets in source.
 | `LITELLM_MODEL` | `ising-calibration` | Model name registered in LiteLLM |
 | `LITELLM_REQUEST_TIMEOUT_SECONDS` | `60` | LiteLLM HTTP timeout |
 | `BACKEND_HOST` | `0.0.0.0` | uvicorn bind host |
-| `BACKEND_PORT` | `8000` | uvicorn bind port |
+| `BACKEND_PORT` | `8000` | uvicorn bind port — **but run on `8081`** to match the frontend `.env` (pass `--port 8081` on the command line) |
 | `FRONTEND_ORIGINS` | `http://localhost:5173,http://localhost:4173` | CORS allow-list (comma-separated) |
 
 ### Frontend — `.env` (repo root)
 
 | Variable | Default | Description |
 |---|---|---|
-| `VITE_API_BASE_URL` | `http://localhost:8000` | Base URL for REST calls |
-| `VITE_WS_URL` | `ws://localhost:8000/ws/telemetry` | WebSocket endpoint |
+| `VITE_API_BASE_URL` | `http://localhost:8081` | Base URL for REST calls |
+| `VITE_WS_URL` | `ws://localhost:8081/ws/telemetry` | Quantum telemetry WebSocket endpoint |
+| `VITE_PROSTHETIC_WS_URL` | `ws://localhost:8081/ws/prosthetic` | Prosthetic live-demo WebSocket endpoint |
 
-`.env` is git-ignored. `.env.example` is the template — copy it and edit.
+`.env.example` is the template — copy it and edit. All three URLs must point at the same port the backend is running on (`8081`).
 
 ---
 
@@ -84,9 +89,11 @@ Every value lives in `.env` — no hardcoded secrets in source.
 | `/api/v1/calibrate/{qubit_id}` | POST | Run calibration via LiteLLM-routed NVIDIA Ising model |
 | `/api/v1/telemetry/{qubit_id}` | GET | Latest in-memory telemetry record for a qubit |
 | `/api/v1/history` | GET | Last N calibration-runs from MongoDB |
+| `/api/v1/prosthetics/heatmap` | GET | Serves the latest generated pressure-grid heatmap PNG (the "LIVE VLM SCAN HEATMAP" image) |
 | `/ws/telemetry` | WS | Bidirectional telemetry stream (send noise inputs → receive simulation probabilities) |
+| `/ws/prosthetic` | WS | Prosthetic live-demo stream (lever/cell state → diagnosis + healing) |
 
-Full interactive docs: start the backend, then visit `http://localhost:8000/docs`.
+Full interactive docs: start the backend, then visit `http://localhost:8081/docs`.
 
 ---
 
@@ -168,6 +175,8 @@ axiom-q/
 |---|---|---|
 | Backend health: `mongo_available: false` | Mongo not running | See [MONGODB_SETUP.md](backend/MONGODB_SETUP.md) |
 | Backend health: `litellm_reachable: false` | LiteLLM not on port 4000 | `litellm --config config.yaml --port 4000` |
-| Frontend: `Failed to fetch qubits` | Backend down or wrong `VITE_API_BASE_URL` | Verify backend with `curl http://localhost:8000/` |
+| Frontend: `Failed to fetch qubits` | Backend down or wrong `VITE_API_BASE_URL` | Verify backend with `curl http://localhost:8081/` |
+| "LIVE VLM SCAN HEATMAP" shows only text, no image | Backend not on `8081`, or a stale backend on `8081` predating the heatmap route | Confirm with `curl http://localhost:8081/api/v1/prosthetics/heatmap -o /dev/null -w "%{http_code}"` → expect `200`. If `404`, restart the backend on `8081` from current code |
+| `ModuleNotFoundError: No module named 'backend'` | uvicorn launched from `backend/` instead of `axiom-q/` | Run `uvicorn backend.main:app` from the `axiom-q/` directory |
 | Calibration hangs > 60s | LiteLLM timeout or model cold-start | Check `LITELLM_REQUEST_TIMEOUT_SECONDS`, try `test_vlm_call.py` |
 | Frontend boots but shows "Backend connection failed" | CORS blocked | Add your frontend origin to `FRONTEND_ORIGINS` |
