@@ -2,50 +2,6 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import useQuantumStore from "../../store/useQuantumStore";
 
-/* ── Color ramp: cool grey (rest) → warm grey (heavy drift) ─── */
-function kpaToColor(kpa) {
-  // Stop points tuned to backend heatmap ranges (8..30 kPa).
-  const stops = [
-    { k: 8.0,  c: [0.85, 0.87, 0.90] },  // light blue-grey
-    { k: 11.0, c: [0.77, 0.80, 0.83] },  // soft blue-grey
-    { k: 14.0, c: [0.72, 0.75, 0.78] },  // mid cool grey
-    { k: 18.0, c: [0.78, 0.75, 0.72] },  // mid warm grey
-    { k: 24.0, c: [0.82, 0.73, 0.70] },  // blush-grey
-    { k: 30.0, c: [0.78, 0.70, 0.75] },  // dusty mauve-grey
-  ];
-  const x = Math.max(8.0, Math.min(30.0, kpa));
-  for (let i = 0; i < stops.length - 1; i++) {
-    const a = stops[i];
-    const b = stops[i + 1];
-    if (x >= a.k && x <= b.k) {
-      const t = (x - a.k) / (b.k - a.k);
-      return [
-        a.c[0] + (b.c[0] - a.c[0]) * t,
-        a.c[1] + (b.c[1] - a.c[1]) * t,
-        a.c[2] + (b.c[2] - a.c[2]) * t,
-      ];
-    }
-  }
-  return stops[stops.length - 1].c;
-}
-
-const ZONE_LABELS = ["proximal", "mid", "distal"];
-const ZONE_TINTS = [0xb8b0c0, 0xb0b8c0, 0xb8c0b0];
-
-/**
- * 36-cell Three.js prosthetic mesh.
- *
- * Each cell is an InstancedMesh entry colored by the latest
- * ``cells[].kpa`` value from /ws/prosthetic.
- *
- * 3-zone highlighting is rendered as a tinted plate beneath each
- * ``(row+col) % 3`` band (proximal / mid / distal), wired into the
- * mesh group the VLM corrections flow into.
- */
-import { useEffect, useRef } from "react";
-import * as THREE from "three";
-import useQuantumStore from "../../store/useQuantumStore";
-
 /* ── Color ramp: emerald green (healthy) → amber (warning) → red (danger) ─── */
 function kpaToColor(kpa) {
   // Maps directly to the RYG colormap of the heatmap (8..30 kPa)
