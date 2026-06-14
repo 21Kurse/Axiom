@@ -5,9 +5,9 @@ Orchestrates the full Phase 1 pipeline in sequence:
 
     1. telemetry  → generate target grid + inject quantum-noise drift
     2. heatmap    → render side-by-side PNG (saved as heatmap_noisy.png)
-    3. agent      → (stub) send heatmap to VLM for diagnosis
-    4. healing    → (stub) apply VLM corrections
-    5. ledger     → (stub) record the full cycle
+    3. agent      → send heatmap to NVIDIA VLM for diagnosis
+    4. healing    → apply VLM-recommended corrections
+    5. ledger     → record the full cycle
 
 Run directly:
     python -m backend.prosthetics.main
@@ -85,12 +85,13 @@ async def run_pipeline(
     # ── Step 3: VLM Agent Analysis ─────────────────────────────────────
     log.info("═══ Step 3/5 — VLM Agent Analysis ═══")
     diagnosis = await analyze(heatmap_path, drift_cells)
-    log.info("  Diagnosis status: %s", diagnosis.get("status"))
+    log.info("  Drift zone     : %s", diagnosis.get("drift_zone", "n/a"))
+    log.info("  Affected cells : %s", diagnosis.get("affected_cells", []))
+    log.info("  Confidence     : %.2f", float(diagnosis.get("confidence", 0.0)))
 
     # ── Step 4: Self-Healing ───────────────────────────────────────────
     log.info("═══ Step 4/5 — Self-Healing ═══")
-    corrections = diagnosis.get("corrections", [])
-    healed = heal(drifted, corrections)
+    healed = heal(drifted, diagnosis)
     log.info("  Healed grid mean: %.2f kPa", healed.mean())
 
     # ── Step 5: Audit Ledger ───────────────────────────────────────────
