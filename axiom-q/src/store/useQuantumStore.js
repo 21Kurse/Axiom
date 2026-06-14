@@ -8,17 +8,30 @@ const PROSTHETIC_WS_URL =
 let ws = null;
 let prostheticWs = null;
 
-const sendWebSocketMessage = (state, nextNoise = null, nextQubitIndex = null) => {
+const sendWebSocketMessage = (state, nextNoise = null, nextQubitIndex = null, nextStatus = null, nextCorrections = null) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     const noise = nextNoise || state.noise;
     const qubitId = `Q${nextQubitIndex !== null ? nextQubitIndex : state.selectedQubit}`;
+    
+    const sysStatus = nextStatus !== null ? nextStatus : state.system_status;
+    const isCalibrated = sysStatus === "CALIBRATED";
+    const corrections = nextCorrections !== null ? nextCorrections : state.agent_payload.correction_variables;
+    
+    let effective_drift = state.hardware_drift;
+    let effective_amp = state.pulse_amp_mod;
+    
+    if (isCalibrated && corrections) {
+      effective_drift -= (corrections.drift_compensation_mhz || 0.0);
+      effective_amp += (corrections.pi_pulse_amp_offset || 0.0);
+    }
+
     ws.send(
       JSON.stringify({
         qubit_id: qubitId,
         t1_relaxation: noise.t1_thermal,
         phase_damping: noise.phase_damping,
-        hardware_drift: state.hardware_drift,
-        pulse_amp_mod: state.pulse_amp_mod,
+        hardware_drift: effective_drift,
+        pulse_amp_mod: effective_amp,
       })
     );
   }
@@ -183,20 +196,61 @@ const useQuantumStore = create((set, get) => ({
     connect();
   },
 
-  selectQubit: (index) =>
-    set((state) => {
-      const q = state.qubits[index];
-      if (!q) return {};
-      sendWebSocketMessage(state, null, index);
-      return {
-        selectedQubit: index,
-        qubit_state: {
-          frequency: q.frequency,
-          amplitude: q.amplitude,
-          t1_decay_value: q.t1_decay,
-        },
-      };
-    }),
+  selectQubit: async (index) => {
+    const state = get();
+    const q = state.qubits[index];
+    if (!q) return;
+
+    // Send immediate uncalibrated WS update
+    sendWebSocketMessage(state, null, index, "UNCALIBRATED", null);
+
+    set({
+      selectedQubit: index,
+      qubit_state: {
+        frequency: q.frequency,
+        amplitude: q.amplitude,
+        t1_decay_value: q.t1_decay,
+      },
+      system_status: "UNCALIBRATED",
+      telemetry_data: { noisy: [], clean: [] },
+      agent_payload: {
+        status: "IDLE",
+        correction_variables: { drift_compensation_mhz: 0.0, pi_pulse_amp_offset: 0.0 },
+        confidence: null,
+        model: "ising-calibration",
+      },
+    });
+
+    try {
+      const resp = await fetch(`${API_BASE}/api/v1/telemetry/Q${index}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.status === "OK" && data.telemetry) {
+          const t = data.telemetry;
+          if (t.status === "CALIBRATED" && t.corrections) {
+            const corrVars = t.corrections.corrections || {};
+            const payload = {
+              status: "COMPLETE",
+              correction_variables: {
+                drift_compensation_mhz: corrVars.drift_compensation_mhz ?? 0.0,
+                pi_pulse_amp_offset: corrVars.pi_pulse_amp_offset ?? 0.0,
+              },
+              confidence: t.corrections.confidence ?? null,
+              model: "ising-calibration",
+            };
+            set({
+              system_status: "CALIBRATED",
+              agent_payload: payload,
+            });
+            // Update websocket with correct calibrated stream
+            sendWebSocketMessage(get());
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  },
 
   setNoise: (key, value) =>
     set((state) => {
@@ -252,6 +306,7 @@ const useQuantumStore = create((set, get) => ({
             model: "ising-calibration",
           },
         });
+        sendWebSocketMessage(get());
 
         addLog("> Calibration complete. Corrections applied.");
         addLog(`> Δf = ${corrections.drift_compensation_mhz ?? 0} MHz | ΔA = ${corrections.pi_pulse_amp_offset ?? 0}`);

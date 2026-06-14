@@ -273,22 +273,22 @@ function TelemetryCard() {
     const data = [];
     for (let i = 0; i < POINTS; i++) {
       const t = (i / POINTS) * DURATION;
-      const ideal = pulse_amp_mod_base * Math.sin(omega_0 * t);
+      
+      const theta_base = (t / DURATION) * 4 * Math.PI;
+      const ideal_theta = pulse_amp_mod_base * theta_base;
+      const ideal = Math.pow(Math.sin(ideal_theta / 2), 2);
+
+      const rabi_ratio = omega_drive / omega_0;
+      const effective_theta = A * theta_base * rabi_ratio;
       const envelope = Math.exp(-t / T1_us);
-      let real = A * Math.sin(omega_drive * t) * envelope + noise_floor;
+      let real = Math.pow(Math.sin(effective_theta / 2), 2) * envelope + noise_floor;
 
       let Qiskit;
-      if (systemStatus === "CALIBRATED") {
-        Qiskit = parseFloat(
-          (A * Math.sin(omega_drive * t) * envelope + noise_floor).toFixed(3)
-        );
-      } else {
-        const qiskitIdx = Math.round((i / POINTS) * qiskitLen);
-        Qiskit =
-          qiskitLen > 0 && qiskitIdx < qiskitLen
-            ? parseFloat(qiskitData[qiskitIdx].toFixed(3))
-            : undefined;
-      }
+      const qiskitIdx = Math.round((i / POINTS) * (qiskitLen - 1));
+      Qiskit =
+        qiskitLen > 0 && qiskitIdx < qiskitLen && qiskitIdx >= 0
+          ? parseFloat(qiskitData[qiskitIdx].toFixed(3))
+          : undefined;
 
       data.push({
         time: t.toFixed(1),
@@ -354,7 +354,7 @@ function TelemetryCard() {
                 tickLine={false}
               />
               <YAxis
-                domain={[-1.2, 1.2]}
+                domain={[-0.1, 1.1]}
                 tick={{
                   fill: "#64748b",
                   fontSize: 10,

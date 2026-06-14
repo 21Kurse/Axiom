@@ -165,7 +165,10 @@ def compute_analytical_rabi(
     T1_us = max(0.1, (1.0 - t1_relaxation) * 100)
     noise_floor = phase_damping * 0.15
 
-    envelope = np.exp(-t_arr / T1_us)
-    p_e = pulse_amp_mod * np.sin(omega_drive * t_arr) * envelope + noise_floor
+    theta_base = (t_arr / duration_us) * 4 * np.pi
+    rabi_ratio = omega_drive / OMEGA_0_GHZ
+    effective_theta = pulse_amp_mod * theta_base * rabi_ratio
+
+    p_e = (np.sin(effective_theta / 2) ** 2) * envelope + noise_floor
 
     return p_e.tolist()
