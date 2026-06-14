@@ -35,8 +35,10 @@ log = logging.getLogger("axiom-q")
 async def lifespan(app: FastAPI):
     # Startup — connect to MongoDB
     await db.startup()
+
     yield
-    # Shutdown — close MongoDB client
+
+    # Shutdown
     await db.shutdown()
 
 
@@ -82,6 +84,162 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+# ── Prosthetic live-mode state ────────────────────────────────────────
+PROSTHETIC_THRESHOLD = float(os.getenv("PROSTHETIC_THRESHOLD", "0.30"))
+
+
+class ProstheticState:
+    """Single-writer state used by /ws/prosthetic to drive the live demo."""
+
+    def __init__(self) -> None:
+        self.pot_value: float = 0.0
+        self.armed: bool = True
+        self.cycle_running: bool = False
+        self.last_status: str = "READY"
+        self.last_ts: float = 0.0
+
+    def note_pot(self, value: float, ts: float) -> bool:
+        """Update the pot value. Returns True if a new cycle was armed."""
+        self.pot_value = max(0.0, min(1.0, float(value)))
+        self.last_ts = float(ts)
+        if (
+            self.armed
+            and not self.cycle_running
+            and self.pot_value >= PROSTHETIC_THRESHOLD
+        ):
+            self.armed = False
+            self.cycle_running = True
+            return True
+        return False
+
+    def reset(self) -> None:
+        self.pot_value = 0.0
+        self.armed = True
+        self.last_status = "READY"
+
+
+prosthetic_state = ProstheticState()
+
+
+async def _prosthetic_broadcast(payload: dict) -> None:
+    """Wrap the connection-manager broadcast with a service tag."""
+    await manager.broadcast({"service": "prosthetic", **payload})
+
+
+async def _run_prosthetic_cycle(pot_value: float) -> None:
+    """Background task — full pipeline + per-frame cell-state broadcasts."""
+    try:
+        from backend.prosthetics import main as prosthetics_main
+        await prosthetics_main.run_one_cycle(
+            pot_value=pot_value,
+            seed=None,
+            broadcast=_prosthetic_broadcast,
+            save_gif=False,
+            frame_interval_s=0.05,
+        )
+    except Exception as exc:  # pragma: no cover - never want to crash the loop
+        log.exception("Prosthetic cycle failed: %s", exc)
+        try:
+            await _prosthetic_broadcast({
+                "type": "status",
+                "phase": "ERROR",
+                "error": str(exc),
+            })
+        except Exception:
+            pass
+    finally:
+        prosthetic_state.cycle_running = False
+        prosthetic_state.armed = True
+        prosthetic_state.pot_value = 0.0
+        try:
+            await _prosthetic_broadcast({
+                "type": "status",
+                "phase": "READY",
+                "pot_value": 0.0,
+            })
+        except Exception:
+            pass
+
+
+@app.websocket("/ws/prosthetic")
+async def prosthetic_websocket(websocket: WebSocket):
+    """
+    Bidirectional WebSocket for the prosthetic live demo.
+
+    Inbound (from React):
+        {"type": "pot", "value": 0.45, "ts": 1700000000.0}
+        {"type": "reset"}      ← judge button to re-arm
+
+    Outbound (to React):
+        {"service": "prosthetic", "type": "status",     ...}
+        {"service": "prosthetic", "type": "cell_state", ...}
+        {"service": "prosthetic", "type": "heatmap",    ...}
+        {"service": "prosthetic", "type": "diagnosis",  ...}
+        {"service": "prosthetic", "type": "pot",        ...}
+
+    When the pot crosses ``PROSTHETIC_THRESHOLD`` (rising edge, while armed),
+    a full telemetry → heatmap → VLM → healing cycle is fired in the background,
+    broadcasting each frame's cell state so the Three.js mesh can tween in lockstep.
+    """
+    await manager.connect(websocket)
+    try:
+        # Initial sync — let the client know what state the server thinks it's in.
+        await websocket.send_json({
+            "service": "prosthetic",
+            "type": "status",
+            "phase": prosthetic_state.last_status,
+            "pot_value": prosthetic_state.pot_value,
+            "threshold": PROSTHETIC_THRESHOLD,
+        })
+
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "service": "prosthetic",
+                    "type": "error",
+                    "error": "Invalid JSON payload",
+                })
+                continue
+
+            kind = payload.get("type")
+
+            if kind == "pot":
+                pot = float(payload.get("value", 0.0))
+                ts = float(payload.get("ts", 0.0))
+                fired = prosthetic_state.note_pot(pot, ts)
+                await _prosthetic_broadcast({"type": "pot", "value": pot, "ts": ts})
+                if fired:
+                    log.info(
+                        "Prosthetic live cycle fired at pot=%.3f (threshold=%.2f)",
+                        pot, PROSTHETIC_THRESHOLD,
+                    )
+                    asyncio.create_task(_run_prosthetic_cycle(pot))
+
+            elif kind == "reset":
+                prosthetic_state.reset()
+                await _prosthetic_broadcast({
+                    "type": "status",
+                    "phase": "READY",
+                    "pot_value": 0.0,
+                })
+
+            else:
+                await websocket.send_json({
+                    "service": "prosthetic",
+                    "type": "error",
+                    "error": f"Unknown message type: {kind!r}",
+                })
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as exc:  # pragma: no cover - never crash the loop
+        log.exception("Prosthetic WS error: %s", exc)
+        manager.disconnect(websocket)
 
 
 @app.websocket("/ws/telemetry")
@@ -258,19 +416,25 @@ async def calibrate_qubit(qubit_id: str):
         "pi_pulse_amp_offset": vlm_data.get("pi_pulse_amp_mod", 0.0),
         "drift_compensation_mhz": vlm_data.get("drift_compensation_mhz", 0.0),
     }
-    confidence = vlm_data.get("confidence", 0.0)
 
-    # Compute outcome fidelity by comparing corrected vs uncorrected Rabi curves
-    # Fidelity = how much the correction restores the oscillation dynamic range
     t1_relax = float(inputs.get("t1_relaxation", 0.0))
     pd = float(inputs.get("phase_damping", 0.0))
     raw_drift = float(inputs.get("hardware_drift", 0.0))
     amp_mod = float(inputs.get("pulse_amp_mod", 1.0))
+
+    # The ising-calibration model emits a near-constant confidence regardless of
+    # input, so derive a data-driven confidence from the signal physics instead:
+    # how much Rabi oscillation visibility survives the current T1/dephasing
+    # environment (clean signal → ~1.0, fully decohered → ~0.0).
+    from backend.quantum_engine import compute_analytical_rabi, signal_confidence
+    confidence = signal_confidence(t1_relax, pd, drift_mhz=raw_drift, pulse_amp_mod=amp_mod)
+
+    # Compute outcome fidelity by comparing corrected vs uncorrected Rabi curves
+    # Fidelity = how much the correction restores the oscillation dynamic range
     corrected_drift = raw_drift - corrections["drift_compensation_mhz"]
     corrected_amp = amp_mod + corrections["pi_pulse_amp_offset"]
 
     try:
-        from backend.quantum_engine import compute_analytical_rabi
         uncorrected = compute_analytical_rabi(t1_relax, pd, drift_mhz=raw_drift, pulse_amp_mod=amp_mod)
         corrected = compute_analytical_rabi(t1_relax, pd, drift_mhz=corrected_drift, pulse_amp_mod=corrected_amp)
         uc_range = max(uncorrected) - min(uncorrected) if uncorrected else 0.0
@@ -311,6 +475,21 @@ async def calibrate_qubit(qubit_id: str):
     # Calibration complete. The frontend renders the corrected waveform using
     # the active environmental noise parameters; no zero-noise override.
     return payload
+
+
+from fastapi.responses import FileResponse
+
+@app.get("/api/v1/prosthetics/heatmap")
+async def get_prosthetics_heatmap():
+    """Serve the generated heatmap image from the prosthetics package."""
+    path = os.path.join(os.path.dirname(__file__), "prosthetics", "heatmap_noisy.png")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="image/png")
+    return {
+        "status": "ERROR",
+        "reason": "not_found",
+        "detail": "Heatmap image not yet generated. Drag the slider to run a live calibration cycle first."
+    }
 
 
 @app.get("/api/v1/qubits")
@@ -365,6 +544,8 @@ async def health_check():
         "litellm_reachable": litellm_reachable,
         "litellm_url": litellm_url,
     }
+
+
 
 
 if __name__ == "__main__":
