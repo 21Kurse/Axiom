@@ -71,87 +71,44 @@ def _build_thermal_noise_model(t1_factor: float = 0.5,
     return noise_model
 
 
-def _run_drift_circuit(noise_model: NoiseModel) -> str:
-    """
-    Run NUM_CELLS independent single-qubit H+measure circuits through the
-    noisy simulator and concatenate the dominant bit from each into a bitstring.
-
-    Running one qubit at a time is memory-efficient (avoids the 2^36 statevector)
-    while still injecting identical thermal-relaxation noise on every qubit.
-    """
-    # Build all single-qubit circuits in one list for a single simulator.run() call
-    circuits = []
-    for _ in range(NUM_CELLS):
-        qc = QuantumCircuit(1, 1)
-        qc.h(0)
-        qc.measure(0, 0)
-        circuits.append(qc)
-
-    simulator = AerSimulator()
-    transpiled = transpile(circuits, simulator)
-    result = simulator.run(
-        transpiled, noise_model=noise_model, shots=SHOTS
-    ).result()
-
-    # For each qubit, pick the dominant measured bit
-    bitstring = ""
-    for i in range(NUM_CELLS):
-        counts = result.get_counts(i)
-        dominant_bit = max(counts, key=counts.get)
-        bitstring += dominant_bit
-
-    return bitstring
-
-
 def inject_drift(
     target: np.ndarray,
     t1_factor: float = 0.5,
     phase_factor: float = 0.3,
     seed: int | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Apply quantum-noise-driven drift to *target*.
-
-    1. Build the thermal-relaxation noise model.
-    2. Run the 36-qubit Hadamard circuit through Aer.
-    3. Use the resulting bitstring to select 3–5 cells.
-    4. Increase each selected cell's pressure by 30–60 %.
-
-    Returns
-    -------
-    np.ndarray
-        A copy of *target* with drift applied.
+    Apply quantum-noise-driven drift to *target* using a memory-efficient patchwork approach.
     """
     rng = np.random.default_rng(seed)
     noise_model = _build_thermal_noise_model(t1_factor, phase_factor)
-    bitstring = _run_drift_circuit(noise_model)
+    simulator = AerSimulator()
 
-    # Pad / trim the bitstring to exactly NUM_CELLS
-    bitstring = bitstring.ljust(NUM_CELLS, "0")[:NUM_CELLS]
+    total_drift_pattern = ""
 
-    # Indices where the noisy circuit measured |1⟩
-    candidate_indices = [i for i, bit in enumerate(bitstring) if bit == "1"]
+    # Memory-efficient 'patchwork' approach: run six 6-qubit circuits
+    for _ in range(6):
+        qc = QuantumCircuit(6, 6)
+        qc.h(range(6))
+        qc.measure(range(6), range(6))
 
-    # If too few candidates, fall back to random selection
-    if len(candidate_indices) < DRIFT_CELL_COUNT_MIN:
-        candidate_indices = rng.choice(
-            NUM_CELLS, size=DRIFT_CELL_COUNT_MIN, replace=False
-        ).tolist()
+        transpiled = transpile(qc, simulator)
+        result = simulator.run(transpiled, noise_model=noise_model, shots=SHOTS).result()
 
-    # Sub-sample to 3–5 cells
-    n_drift = rng.integers(DRIFT_CELL_COUNT_MIN, DRIFT_CELL_COUNT_MAX + 1)
-    if len(candidate_indices) > n_drift:
-        chosen = rng.choice(candidate_indices, size=n_drift, replace=False).tolist()
-    else:
-        chosen = candidate_indices[:n_drift]
+        counts = result.get_counts(qc)
+        most_frequent = max(counts, key=counts.get)
+        total_drift_pattern += most_frequent
 
     drifted = target.copy()
-    for idx in chosen:
-        row, col = divmod(idx, GRID_COLS)
-        factor = rng.uniform(DRIFT_FACTOR_MIN, DRIFT_FACTOR_MAX)
-        drifted[row, col] *= factor
 
-    return drifted
+    # Apply 30-60% pressure increase where bits are '1'
+    for idx, bit in enumerate(total_drift_pattern):
+        if bit == "1":
+            row, col = divmod(idx, GRID_COLS)
+            factor = rng.uniform(DRIFT_FACTOR_MIN, DRIFT_FACTOR_MAX)
+            drifted[row, col] *= factor
+
+    return target, drifted
 
 
 def run_telemetry(
@@ -169,8 +126,8 @@ def run_telemetry(
         drifted : np.ndarray  – drifted 6×6 pressure grid (kPa)
         drift_cells : list[tuple[int,int]] – (row, col) pairs that were shifted
     """
-    target = generate_target_array(seed)
-    drifted = inject_drift(target, t1_factor, phase_factor, seed)
+    target_original = generate_target_array(seed)
+    target, drifted = inject_drift(target_original, t1_factor, phase_factor, seed)
 
     # Identify which cells actually changed
     diff = np.abs(drifted - target) > 0.01
