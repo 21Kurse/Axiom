@@ -2,16 +2,16 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import useQuantumStore from "../../store/useQuantumStore";
 
-/* ── Color ramp: green (rest) → cyan → yellow → orange → red (heavy drift) ─── */
+/* ── Color ramp: cool grey (rest) → warm grey (heavy drift) ─── */
 function kpaToColor(kpa) {
   // Stop points tuned to backend heatmap ranges (8..30 kPa).
   const stops = [
-    { k: 8.0,  c: [0.00, 1.00, 0.25] },  // NEON_GREEN
-    { k: 11.0, c: [0.30, 0.95, 0.95] },  // cyan/teal
-    { k: 14.0, c: [0.95, 0.85, 0.20] },  // yellow
-    { k: 18.0, c: [0.95, 0.55, 0.10] },  // orange
-    { k: 24.0, c: [1.00, 0.18, 0.18] },  // red
-    { k: 30.0, c: [0.85, 0.05, 0.65] },  // magenta (peak / compartment)
+    { k: 8.0,  c: [0.85, 0.87, 0.90] },  // light blue-grey
+    { k: 11.0, c: [0.77, 0.80, 0.83] },  // soft blue-grey
+    { k: 14.0, c: [0.72, 0.75, 0.78] },  // mid cool grey
+    { k: 18.0, c: [0.78, 0.75, 0.72] },  // mid warm grey
+    { k: 24.0, c: [0.82, 0.73, 0.70] },  // blush-grey
+    { k: 30.0, c: [0.78, 0.70, 0.75] },  // dusty mauve-grey
   ];
   const x = Math.max(8.0, Math.min(30.0, kpa));
   for (let i = 0; i < stops.length - 1; i++) {
@@ -30,7 +30,7 @@ function kpaToColor(kpa) {
 }
 
 const ZONE_LABELS = ["proximal", "mid", "distal"];
-const ZONE_TINTS = [0xa855f7, 0x00f0ff, 0x39ff14];
+const ZONE_TINTS = [0xb8b0c0, 0xb0b8c0, 0xb8c0b0];
 
 /**
  * 36-cell Three.js prosthetic mesh.
@@ -66,7 +66,7 @@ export default function ProstheticMesh() {
     // Limb-socket backdrop (dome under the cell grid)
     const baseGeo = new THREE.CylinderGeometry(3.2, 3.2, 0.4, 64);
     const baseMat = new THREE.MeshBasicMaterial({
-      color: 0x0a0e14,
+      color: 0x181820,
       transparent: true,
       opacity: 0.85,
     });
@@ -77,7 +77,7 @@ export default function ProstheticMesh() {
     // Ring outline for visual anchoring
     const ringGeo = new THREE.RingGeometry(3.0, 3.25, 64);
     const ringMat = new THREE.MeshBasicMaterial({
-      color: 0x00f0ff,
+      color: 0xb0b8c4,
       transparent: true,
       opacity: 0.30,
       side: THREE.DoubleSide,

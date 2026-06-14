@@ -62,9 +62,9 @@ export default function ProstheticPot() {
   return (
     <div className="flex flex-col items-center gap-2 select-none">
       <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-400 uppercase tracking-widest">
-        <Sliders size={11} className="text-neon-cyan" />
+        <Sliders size={11} className="text-slate-400" />
         <span>Limb-Shift</span>
-        <span className="text-neon-cyan font-bold">{fillPct}%</span>
+        <span className="text-slate-300 font-bold">{fillPct}%</span>
      </div>
 
       <div className="relative flex items-end gap-3 h-[260px]">
@@ -83,22 +83,22 @@ export default function ProstheticPot() {
             style={{
               height: `${value * 100}%`,
               background: aboveThreshold
-                ? "linear-gradient(to top, rgba(245,158,11,0.30), rgba(0,240,255,0.10))"
-                : "linear-gradient(to top, rgba(0,255,65,0.30), rgba(0,240,255,0.10))",
+                ? "linear-gradient(to top, rgba(176,168,160,0.20), rgba(184,197,209,0.08))"
+                : "linear-gradient(to top, rgba(176,184,168,0.20), rgba(184,197,209,0.08))",
               borderTop: aboveThreshold
-                ? "1px solid #f59e0b"
-                : "1px solid rgba(0,240,255,0.6)",
+                ? "1px solid #b0a8a0"
+                : "1px solid rgba(176,168,192,0.6)",
             }}
           />
 
           {/* Threshold line (server-side fire) */}
           <div
-            className="absolute inset-x-0 h-px bg-amber-400/80 pointer-events-none"
+            className="absolute inset-x-0 h-px bg-[rgba(176,168,192,0.30)] pointer-events-none"
             style={{ bottom: `${threshold * 100}%` }}
           >
             <span
               className="absolute -right-[2px] -translate-x-full -top-2
-                         text-[8px] font-mono text-amber-300 tracking-wider whitespace-nowrap"
+                         text-[8px] font-mono text-slate-400 tracking-wider whitespace-nowrap"
             >
               FIRE {thresholdPct}%
            </span>
@@ -116,13 +116,13 @@ export default function ProstheticPot() {
           {/* Handle */}
           <div
             className="absolute inset-x-[-6px] h-[3px] pointer-events-none
-                       bg-neon-cyan shadow-[0_0_10px_rgba(0,240,255,0.85)]"
+                       bg-neon-cyan shadow-[0_0_10px_rgba(176,168,192,0.85)]"
             style={{
               bottom: `calc(${value * 100}% - 1.5px)`,
-              background: aboveThreshold ? "#f59e0b" : "#00f0ff",
+              background: aboveThreshold ? "#b0a8a0" : "#b0b8c0",
               boxShadow: aboveThreshold
                 ? "0 0 12px rgba(245,158,11,0.80)"
-                : "0 0 12px rgba(0,240,255,0.85)",
+                : "0 0 12px rgba(176,168,192,0.85)",
             }}
           />
 
@@ -144,8 +144,8 @@ export default function ProstheticPot() {
       <button
         onClick={resetProstheticCycle}
         className="flex items-center gap-1.5 px-2 py-1 rounded-sm text-[9px] font-mono
-                   text-slate-400 hover:text-neon-cyan border border-[rgba(255,255,255,0.08)]
-                   hover:border-[rgba(0,240,255,0.30)] transition-all duration-150"
+                   text-slate-400 hover:text-slate-300 border border-[rgba(255,255,255,0.08)]
+                   hover:border-[rgba(176,168,192,0.30)] transition-all duration-150"
         title="Send reset to backend so a new cycle can be fired by another drag."
       >
         <RotateCcw size={10} />

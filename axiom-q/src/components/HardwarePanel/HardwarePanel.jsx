@@ -97,12 +97,12 @@ function NoiseSlider({ icon: Icon, label, value, onChange, disabled }) {
           <Icon size={13} className="text-slate-500" />
           {label}
        </span>
-        <span className="font-mono text-[#00f0ff]">{value.toFixed(2)}</span>
+        <span className="font-mono text-[#b8c5d1]">{value.toFixed(2)}</span>
      </div>
       <div className="relative h-3 flex items-center">
         <div className="absolute w-full h-[2px] bg-[rgba(255,255,255,0.08)] rounded-full pointer-events-none" />
         <div
-          className="absolute h-[2px] bg-[#00f0ff] rounded-full pointer-events-none"
+          className="absolute h-[2px] bg-[#b8c5d1] rounded-full pointer-events-none"
           style={{ width: `${value * 100}%` }}
         />
         <input
