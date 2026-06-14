@@ -3,6 +3,8 @@ Single async MongoDB module for axiom-q (motor).
 Lifespan-managed client; seeded on startup.
 """
 
+from __future__ import annotations
+
 import os
 import logging
 from datetime import datetime, timezone
