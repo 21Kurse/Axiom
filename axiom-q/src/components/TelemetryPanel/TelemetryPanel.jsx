@@ -343,6 +343,8 @@ function TelemetryCard() {
               />
               <XAxis
                 dataKey="time"
+                interval="preserveStartEnd"
+                minTickGap={40}
                 tick={{
                   fill: "#9CA3AF",
                   fontSize: 10,
