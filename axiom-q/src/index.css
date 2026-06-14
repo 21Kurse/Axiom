@@ -3,19 +3,19 @@
 /* ── Axiom.Q Design Tokens ── */
 @theme {
   --color-quantum-950: #020617;
-  --color-quantum-900: #0f172a;
-  --color-quantum-800: #1e293b;
-  --color-quantum-700: #334155;
+  --color-quantum-900: #1c1c1c;
+  --color-quantum-800: #262626;
+  --color-quantum-700: #404040;
 
   --color-neon-green: #a5b0a0;
   --color-neon-cyan: #b8c5d1;
   --color-neon-purple: #b0a8c0;
   --color-neon-amber: #c0b0a0;
 
-  --color-surface-card: #0f172a;
-  --color-surface-elevated: #1e293b;
+  --color-surface-card: #1c1c1c;
+  --color-surface-elevated: #262626;
   --color-surface-sunken: #0B0F19;
-  --color-border-subtle: #334155;
+  --color-border-subtle: #404040;
 
   --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace,
     SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -89,7 +89,7 @@ body,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #404040;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
