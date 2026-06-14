@@ -29,8 +29,8 @@ if _PROJECT_ROOT not in sys.path:
 from backend.prosthetics.telemetry import run_telemetry
 from backend.prosthetics.heatmap import render_heatmap
 from backend.prosthetics.agent import analyze
-from backend.prosthetics.healing import heal
-from backend.prosthetics.ledger import record
+from backend.prosthetics.healing import heal, send_to_arduino, create_healing_gif
+from backend.prosthetics.ledger import record, print_timeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -93,16 +93,25 @@ async def run_pipeline(
     log.info("═══ Step 4/5 — Self-Healing ═══")
     healed = heal(drifted, diagnosis)
     log.info("  Healed grid mean: %.2f kPa", healed.mean())
+    
+    log.info("  [Hero Demo] Sending cell corrections to Arduino via serial...")
+    send_to_arduino(diagnosis)
+    
+    log.info("  [Hero Demo] Generating healing animation GIF...")
+    gif_path = create_healing_gif(drifted, healed, out_path=os.path.join(out_dir, "healing.gif"))
 
     # ── Step 5: Audit Ledger ───────────────────────────────────────────
     log.info("═══ Step 5/5 — Audit Ledger ═══")
     entry = record(target, drifted, drift_cells, diagnosis, healed)
-    log.info("  Ledger entry: %s", entry)
+    log.info("  Ledger entry timestamp: %s", entry.get("timestamp"))
 
     log.info("═══ Pipeline complete ═══")
+    
+    print_timeline()
 
     return {
         "heatmap_path": heatmap_path,
+        "healing_gif_path": gif_path,
         "drift_cells": drift_cells,
         "diagnosis": diagnosis,
         "ledger_entry": entry,
@@ -113,7 +122,13 @@ def main():
     """CLI entry point."""
     result = asyncio.run(run_pipeline())
     print(f"\n✅ Heatmap saved to: {result['heatmap_path']}")
-    print(f"   Drift cells affected: {len(result['drift_cells'])}")
+    print(f"✅ Healing animation saved to: {result['healing_gif_path']}")
+    print(f"   Drift cells affected: {len(result['drift_cells'])}\n")
+    
+    print("🎥 **INSURANCE POLICY VIDEO INSTRUCTIONS** 🎥")
+    print("Please record the screen and the physical servo moving simultaneously")
+    print("using your phone or a screen recording tool with your webcam.")
+    print("This serves as proof of autonomous adjustment for the patient's insurance ledger.")
 
 
 if __name__ == "__main__":
