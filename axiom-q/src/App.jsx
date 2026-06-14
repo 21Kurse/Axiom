@@ -59,9 +59,9 @@ export default function App() {
        </main>
 
         <footer className="flex items-center justify-between px-4 sm:px-6 py-1.5 border-t border-border-subtle bg-surface-card/40 text-[9px] font-mono text-slate-600 uppercase tracking-wider">
-          <span>Axiom.Q v0.2.0</span>
+          <span className="text-slate-500/40">AXIOM.Q v0.2.8</span>
           <span>NVIDIA Ising Agent + Quantum Telemetry</span>
-          <span>JAMHacks 2026</span>
+          <span className="text-slate-500/40">JAMHacks 2026</span>
        </footer>
      </div>
    </ErrorBoundary>
