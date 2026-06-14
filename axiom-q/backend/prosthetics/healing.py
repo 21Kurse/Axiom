@@ -90,7 +90,7 @@ def heal(
     return healed
 
 
-def send_to_arduino(diagnosis: dict[str, Any], port: str = "/dev/tty.usbmodem14101", baudrate: int = 9600):
+def send_to_arduino(diagnosis: dict[str, Any], port: str = "/dev/cu.usbmodem101", baudrate: int = 9600):
     """
     Send VLM cell corrections down the USB serial port to the Arduino.
     """

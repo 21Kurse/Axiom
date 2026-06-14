@@ -23,9 +23,12 @@ void loop() {
   if (Serial.available()) {
     String jsonLine = Serial.readStringUntil('\n');
     
-    // Allocate a JSON document
-    // 200 bytes is plenty for {"cell_id": "03", "target_kpa": 8.0}
+    // Allocate a JSON document (compatible with ArduinoJson v6 and v7)
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+    JsonDocument doc;
+#else
     StaticJsonDocument<200> doc;
+#endif
     DeserializationError error = deserializeJson(doc, jsonLine);
 
     if (error) {
