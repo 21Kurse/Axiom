@@ -84,7 +84,7 @@ function TelemetryCard() {
         <StatusBadge />
      </div>
 
-      <div className="relative w-full h-[220px] bg-surface-sunken/40 pt-4 pb-1 overflow-hidden">
+      <div className="relative w-full h-[220px] bg-[#051016] pt-4 pb-1 overflow-hidden">
         {systemStatus === "CALIBRATING" && (
           <div className="absolute inset-x-0 h-32 pointer-events-none z-50 animate-scan">
             <div className="w-full h-full bg-gradient-to-b from-transparent to-neon-cyan/20 border-b-2 border-neon-cyan glow-cyan" />
@@ -100,8 +100,8 @@ function TelemetryCard() {
                 contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", fontSize: "10px" }}
                 itemStyle={{ color: "#e2e8f0" }}
               />
-              <Line type="monotone" dataKey="Ideal" stroke="#a855f7" strokeWidth={1} dot={false} opacity={0.5} strokeDasharray="4 4" isAnimationActive={false} />
-              <Line type="monotone" dataKey="Real" stroke="#00f0ff" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+              <Line type="monotone" dataKey="Ideal" stroke="#304aa9" strokeWidth={1} dot={false} opacity={0.5} strokeDasharray="4 4" isAnimationActive={false} />
+              <Line type="monotone" dataKey="Real" stroke="#93e0e6" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
            </LineChart>
          </ResponsiveContainer>
         ) : (
@@ -141,12 +141,12 @@ function BlochSphereCard() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
     const sphereGeo = new THREE.SphereGeometry(1, 32, 16);
-    const sphereMat = new THREE.MeshBasicMaterial({ color: 0xa855f7, wireframe: true, transparent: true, opacity: 0.15 });
+    const sphereMat = new THREE.MeshBasicMaterial({ color: 0x76ba81, wireframe: true, transparent: true, opacity: 0.15 });
     const sphere = new THREE.Mesh(sphereGeo, sphereMat);
     scene.add(sphere);
 
     const equatorGeo = new THREE.RingGeometry(0.98, 1.02, 64);
-    const equatorMat = new THREE.MeshBasicMaterial({ color: 0xa855f7, side: THREE.DoubleSide, transparent: true, opacity: 0.3 });
+    const equatorMat = new THREE.MeshBasicMaterial({ color: 0x76ba81, side: THREE.DoubleSide, transparent: true, opacity: 0.3 });
     const equator = new THREE.Mesh(equatorGeo, equatorMat);
     equator.rotation.x = Math.PI / 2;
     scene.add(equator);
@@ -163,11 +163,11 @@ function BlochSphereCard() {
 
     const arrowDir = new THREE.Vector3(0, 1, 0);
     const arrowOrigin = new THREE.Vector3(0, 0, 0);
-    const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowOrigin, 1, 0x00f0ff, 0.2, 0.1);
+    const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowOrigin, 1, 0x93e0e6, 0.2, 0.1);
     scene.add(arrowHelper);
 
     const glowGeo = new THREE.SphereGeometry(0.06, 16, 16);
-    const glowMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff });
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x93e0e6 });
     const glowMesh = new THREE.Mesh(glowGeo, glowMat);
     scene.add(glowMesh);
 
@@ -238,18 +238,18 @@ function BlochSphereCard() {
     <div className="rounded-xl border border-border-subtle bg-surface-card/80 overflow-hidden flex flex-col">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-subtle">
         <span className="flex items-center gap-2 text-xs font-semibold text-slate-200">
-          <Box size={14} className="text-neon-purple" />
+          <Box size={14} className="text-neon-green" />
           Bloch Sphere
        </span>
         <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">WebGL</span>
      </div>
 
-      <div className="relative flex-1 min-h-[220px] flex items-center justify-center bg-surface-sunken/40">
+      <div className="relative flex-1 min-h-[220px] flex items-center justify-center bg-[#051016]">
         <div
           className="absolute inset-0 opacity-[0.03]"
           style={{
             backgroundImage:
-              "radial-gradient(circle at 50% 50%, rgba(168, 85, 247, 0.25) 0%, transparent 70%)",
+              "radial-gradient(circle at 50% 50%, rgba(118, 186, 129, 0.25) 0%, transparent 70%)",
           }}
         />
         <canvas ref={canvasRef} className="w-full h-full z-10" style={{ display: "block" }} />
@@ -260,7 +260,7 @@ function BlochSphereCard() {
           θ <span className="text-neon-cyan">{(qubitState.amplitude * 180).toFixed(1)}°</span>
        </span>
         <span className="text-slate-500">
-          φ <span className="text-neon-purple">{((qubitState.frequency - 4.8) * 100).toFixed(1)}°</span>
+          φ <span className="text-neon-green">{((qubitState.frequency - 4.8) * 100).toFixed(1)}°</span>
        </span>
         <span className="text-slate-500">
           |ψ⟩ <span className="text-neon-green">≡ |0⟩</span>
