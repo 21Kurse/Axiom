@@ -2,8 +2,11 @@ import { create } from "zustand";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws/telemetry";
+const PROSTHETIC_WS_URL =
+  import.meta.env.VITE_PROSTHETIC_WS_URL || "ws://localhost:8000/ws/prosthetic";
 
 let ws = null;
+let prostheticWs = null;
 
 const sendWebSocketMessage = (state, nextNoise = null, nextQubitIndex = null) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -59,6 +62,20 @@ const useQuantumStore = create((set, get) => ({
 
   /* ── AI Console Logs ── */
   ai_console_logs: [],
+
+  /* ── Prosthetic live demo ── */
+  prosthetic: {
+    pot_value: 0.0,            // current knob position [0, 1]
+    threshold: 0.30,           // server-side threshold that fires a cycle
+    status: "READY",           // READY | DRIFT_INJECTING | DIAGNOSING | HEALING | ERROR
+    cycle_running: false,
+    connected: false,
+    cells: null,               // last {row, col, kpa, zone}[] payload from server
+    cells_phase: null,         // "drifted" | "healing" | "healed"
+    cells_frame: 0,
+    diagnosis: null,           // { confidence, explanation, affected_cells, cell_corrections, n_corrections }
+    last_pot_ts: 0,
+  },
 
   /* ── JSON Payload Inspector ── */
   agent_payload: {
@@ -285,6 +302,118 @@ const useQuantumStore = create((set, get) => ({
       // NOTE: noise (t1_thermal, phase_damping) and hardware_drift are
       // preserved across reset — they represent real physical environment.
     })),
+
+  /* ── Prosthetic WebSocket + actions ── */
+
+  initProstheticWebSocket: () => {
+    if (prostheticWs) return;
+    const log = (msg) =>
+      set((s) => ({ ai_console_logs: [...s.ai_console_logs, { ts: Date.now(), msg }] }));
+
+    const connect = () => {
+      prostheticWs = new WebSocket(PROSTHETIC_WS_URL);
+      prostheticWs.onopen = () => {
+        log("> Prosthetic WebSocket connected to /ws/prosthetic.");
+        set((s) => ({ prosthetic: { ...s.prosthetic, connected: true } }));
+      };
+      prostheticWs.onmessage = (event) => {
+        let data;
+        try {
+          data = JSON.parse(event.data);
+        } catch (e) {
+          log(`> Prosthetic WS parse error: ${e.message}`);
+          return;
+        }
+        const handle = get()._handleProstheticEvent;
+        if (typeof handle === "function") handle(data);
+      };
+      prostheticWs.onerror = () => {
+        log("> Prosthetic WebSocket error.");
+      };
+      prostheticWs.onclose = () => {
+        log("> Prosthetic WebSocket disconnected. Reconnecting in 3s...");
+        prostheticWs = null;
+        set((s) => ({ prosthetic: { ...s.prosthetic, connected: false } }));
+        setTimeout(connect, 3000);
+      };
+    };
+    connect();
+  },
+
+  _handleProstheticEvent: (data) => {
+    if (!data || data.service !== "prosthetic" && data.type === undefined) return;
+    const t = data.type;
+    if (t === "status") {
+      set((s) => ({
+        prosthetic: {
+          ...s.prosthetic,
+          status: data.phase || s.prosthetic.status,
+          cycle_running:
+            data.phase === "READY" ? false : s.prosthetic.cycle_running,
+          pot_value:
+            typeof data.pot_value === "number"
+              ? data.pot_value
+              : s.prosthetic.pot_value,
+          threshold:
+            typeof data.threshold === "number"
+              ? data.threshold
+              : s.prosthetic.threshold,
+        },
+      }));
+    } else if (t === "pot") {
+      set((s) => ({
+        prosthetic: {
+          ...s.prosthetic,
+          pot_value: typeof data.value === "number" ? data.value : s.prosthetic.pot_value,
+          last_pot_ts: typeof data.ts === "number" ? data.ts : s.prosthetic.last_pot_ts,
+        },
+      }));
+    } else if (t === "cell_state") {
+      set((s) => ({
+        prosthetic: {
+          ...s.prosthetic,
+          cells: data.cells || s.prosthetic.cells,
+          cells_phase: data.phase || s.prosthetic.cells_phase,
+          cells_frame: typeof data.frame === "number" ? data.frame : s.prosthetic.cells_frame,
+        },
+      }));
+    } else if (t === "diagnosis") {
+      set((s) => ({
+        prosthetic: { ...s.prosthetic, diagnosis: data.data || s.prosthetic.diagnosis },
+      }));
+    } else if (t === "heatmap") {
+      // Just log so the agent panel can show it later if desired.
+      const log = (msg) => set((curr) => ({
+        ai_console_logs: [...curr.ai_console_logs, { ts: Date.now(), msg }],
+      }));
+      log(`> Heatmap rendered → ${data.path}`);
+    } else if (t === "error") {
+      const log = (msg) => set((curr) => ({
+        ai_console_logs: [...curr.ai_console_logs, { ts: Date.now(), msg }],
+      }));
+      log(`> Prosthetic WS error: ${data.error || "unknown"}`);
+    }
+  },
+
+  sendPotValue: (value) => {
+    if (prostheticWs && prostheticWs.readyState === WebSocket.OPEN) {
+      const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+      prostheticWs.send(
+        JSON.stringify({
+          type: "pot",
+          value: clamped,
+          ts: Date.now() / 1000,
+        })
+      );
+      set((s) => ({ prosthetic: { ...s.prosthetic, pot_value: clamped } }));
+    }
+  },
+
+  resetProstheticCycle: () => {
+    if (prostheticWs && prostheticWs.readyState === WebSocket.OPEN) {
+      prostheticWs.send(JSON.stringify({ type: "reset" }));
+    }
+  },
 }));
 
 export default useQuantumStore;

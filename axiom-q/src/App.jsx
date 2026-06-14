@@ -12,6 +12,7 @@ const AgentPanel = lazy(() => import("./components/AgentPanel/AgentPanel"));
 
 export default function App() {
   const initWebSocket = useQuantumStore((s) => s.initWebSocket);
+  const initProstheticWebSocket = useQuantumStore((s) => s.initProstheticWebSocket);
   const fetchQubits = useQuantumStore((s) => s.fetchQubits);
   const fetchHealth = useQuantumStore((s) => s.fetchHealth);
 
@@ -19,6 +20,7 @@ export default function App() {
     fetchHealth();
     fetchQubits();
     initWebSocket();
+    initProstheticWebSocket();
 
     const healthInterval = setInterval(fetchHealth, 30000);
     const qubitsInterval = setInterval(fetchQubits, 10000);
@@ -26,7 +28,7 @@ export default function App() {
       clearInterval(healthInterval);
       clearInterval(qubitsInterval);
     };
-  }, [initWebSocket, fetchQubits, fetchHealth]);
+  }, [initWebSocket, initProstheticWebSocket, fetchQubits, fetchHealth]);
 
   return (
     <ErrorBoundary>

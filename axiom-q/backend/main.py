@@ -84,6 +84,162 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+# ── Prosthetic live-mode state ────────────────────────────────────────
+PROSTHETIC_THRESHOLD = float(os.getenv("PROSTHETIC_THRESHOLD", "0.30"))
+
+
+class ProstheticState:
+    """Single-writer state used by /ws/prosthetic to drive the live demo."""
+
+    def __init__(self) -> None:
+        self.pot_value: float = 0.0
+        self.armed: bool = True
+        self.cycle_running: bool = False
+        self.last_status: str = "READY"
+        self.last_ts: float = 0.0
+
+    def note_pot(self, value: float, ts: float) -> bool:
+        """Update the pot value. Returns True if a new cycle was armed."""
+        self.pot_value = max(0.0, min(1.0, float(value)))
+        self.last_ts = float(ts)
+        if (
+            self.armed
+            and not self.cycle_running
+            and self.pot_value >= PROSTHETIC_THRESHOLD
+        ):
+            self.armed = False
+            self.cycle_running = True
+            return True
+        return False
+
+    def reset(self) -> None:
+        self.pot_value = 0.0
+        self.armed = True
+        self.last_status = "READY"
+
+
+prosthetic_state = ProstheticState()
+
+
+async def _prosthetic_broadcast(payload: dict) -> None:
+    """Wrap the connection-manager broadcast with a service tag."""
+    await manager.broadcast({"service": "prosthetic", **payload})
+
+
+async def _run_prosthetic_cycle(pot_value: float) -> None:
+    """Background task — full pipeline + per-frame cell-state broadcasts."""
+    try:
+        from backend.prosthetics import main as prosthetics_main
+        await prosthetics_main.run_one_cycle(
+            pot_value=pot_value,
+            seed=42,
+            broadcast=_prosthetic_broadcast,
+            save_gif=False,
+            frame_interval_s=0.05,
+        )
+    except Exception as exc:  # pragma: no cover - never want to crash the loop
+        log.exception("Prosthetic cycle failed: %s", exc)
+        try:
+            await _prosthetic_broadcast({
+                "type": "status",
+                "phase": "ERROR",
+                "error": str(exc),
+            })
+        except Exception:
+            pass
+    finally:
+        prosthetic_state.cycle_running = False
+        prosthetic_state.armed = True
+        prosthetic_state.pot_value = 0.0
+        try:
+            await _prosthetic_broadcast({
+                "type": "status",
+                "phase": "READY",
+                "pot_value": 0.0,
+            })
+        except Exception:
+            pass
+
+
+@app.websocket("/ws/prosthetic")
+async def prosthetic_websocket(websocket: WebSocket):
+    """
+    Bidirectional WebSocket for the prosthetic live demo.
+
+    Inbound (from React):
+        {"type": "pot", "value": 0.45, "ts": 1700000000.0}
+        {"type": "reset"}      ← judge button to re-arm
+
+    Outbound (to React):
+        {"service": "prosthetic", "type": "status",     ...}
+        {"service": "prosthetic", "type": "cell_state", ...}
+        {"service": "prosthetic", "type": "heatmap",    ...}
+        {"service": "prosthetic", "type": "diagnosis",  ...}
+        {"service": "prosthetic", "type": "pot",        ...}
+
+    When the pot crosses ``PROSTHETIC_THRESHOLD`` (rising edge, while armed),
+    a full telemetry → heatmap → VLM → healing cycle is fired in the background,
+    broadcasting each frame's cell state so the Three.js mesh can tween in lockstep.
+    """
+    await manager.connect(websocket)
+    try:
+        # Initial sync — let the client know what state the server thinks it's in.
+        await websocket.send_json({
+            "service": "prosthetic",
+            "type": "status",
+            "phase": prosthetic_state.last_status,
+            "pot_value": prosthetic_state.pot_value,
+            "threshold": PROSTHETIC_THRESHOLD,
+        })
+
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "service": "prosthetic",
+                    "type": "error",
+                    "error": "Invalid JSON payload",
+                })
+                continue
+
+            kind = payload.get("type")
+
+            if kind == "pot":
+                pot = float(payload.get("value", 0.0))
+                ts = float(payload.get("ts", 0.0))
+                fired = prosthetic_state.note_pot(pot, ts)
+                await _prosthetic_broadcast({"type": "pot", "value": pot, "ts": ts})
+                if fired:
+                    log.info(
+                        "Prosthetic live cycle fired at pot=%.3f (threshold=%.2f)",
+                        pot, PROSTHETIC_THRESHOLD,
+                    )
+                    asyncio.create_task(_run_prosthetic_cycle(pot))
+
+            elif kind == "reset":
+                prosthetic_state.reset()
+                await _prosthetic_broadcast({
+                    "type": "status",
+                    "phase": "READY",
+                    "pot_value": 0.0,
+                })
+
+            else:
+                await websocket.send_json({
+                    "service": "prosthetic",
+                    "type": "error",
+                    "error": f"Unknown message type: {kind!r}",
+                })
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as exc:  # pragma: no cover - never crash the loop
+        log.exception("Prosthetic WS error: %s", exc)
+        manager.disconnect(websocket)
+
+
 @app.websocket("/ws/telemetry")
 async def telemetry_websocket(websocket: WebSocket):
     """
