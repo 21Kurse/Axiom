@@ -7,22 +7,87 @@ pressure grid, simulating autonomous socket re-calibration.
 The agent returns a ``cell_corrections`` dict mapping cell IDs (e.g. "2,3")
 to target kPa values.  This module applies those corrections and returns the
 healed grid.
+
+Phase 2 (v2 slice — all-virtual): ``send_to_arduino`` is replaced by an
+async-friendly :func:`heal_animated` that yields per-frame cell states.
+A frontend client subscribes via WebSocket and tweens its Three.js mesh.
 """
 
 from __future__ import annotations
 
-import logging
 import json
-import serial
-import time
+import logging
 import os
+from typing import Any, Awaitable, Callable, Optional
+
 import numpy as np
-from typing import Any
-import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
+import matplotlib.pyplot as plt
+
 from backend.prosthetics.heatmap import RYG_CMAP, VMIN, VMAX
 
 log = logging.getLogger("axiom-q.prosthetics.healing")
+
+GRID_ROWS = 6
+GRID_COLS = 6
+
+# Optional broadcast hook signature: async (payload: dict) -> None
+BroadcastFn = Optional[Callable[[dict], Awaitable[None]]]
+
+
+def zone_for(row: int, col: int) -> int:
+    """
+    3-zone dispatch used by the Three.js mesh to group cells into
+    proximal / mid / distal band animations.
+
+    Concept preserved from the original 3-servo plan; the output
+    target is now a mesh group, not a servo.
+    """
+    return (row + col) % 3
+
+
+def cells_state_payload(
+    grid: np.ndarray,
+    phase: str,
+    frame: int = 0,
+    final: bool = False,
+) -> dict:
+    """
+    JSON-safe representation of a 6×6 pressure grid for transmission
+    over the WebSocket.
+
+    The frontend consumes ``cells`` as a flat list indexed by
+    ``row * 6 + col`` and uses ``zones`` to dispatch cells into
+    the appropriate Three.js mesh group.
+
+    Parameters
+    ----------
+    grid : np.ndarray
+        6×6 pressure grid (kPa).
+    phase : str
+        One of: ``"drifted"``, ``"healing"``, ``"healed"``.
+    frame : int
+        Frame index during animation (0..N-1).
+    final : bool
+        If True this is the last frame of the heal sequence.
+    """
+    cells: list[dict[str, Any]] = []
+    matrix = np.asarray(grid, dtype=float)
+    for r in range(GRID_ROWS):
+        for c in range(GRID_COLS):
+            cells.append({
+                "row": r,
+                "col": c,
+                "kpa": float(matrix[r, c]),
+                "zone": zone_for(r, c),
+            })
+    return {
+        "type": "cell_state",
+        "phase": phase,
+        "frame": int(frame),
+        "final": bool(final),
+        "cells": cells,
+    }
 
 
 def heal(
@@ -90,43 +155,64 @@ def heal(
     return healed
 
 
-def send_to_arduino(diagnosis: dict[str, Any], port: str = "/dev/tty.usbmodem14101", baudrate: int = 9600):
+async def heal_animated(
+    drifted: np.ndarray,
+    healed: np.ndarray,
+    broadcast: BroadcastFn = None,
+    frames: int = 20,
+    frame_interval_s: float = 0.05,
+    save_gif_path: Optional[str] = None,
+) -> np.ndarray:
     """
-    Send VLM cell corrections down the USB serial port to the Arduino.
+    Smoothly interpolate from ``drifted`` to ``healed`` over ``frames``
+    steps, optionally broadcasting each frame's cell state via ``broadcast``.
+
+    If ``save_gif_path`` is given, a healing GIF is also written for the
+    README / insurance video.
+
+    Returns the final healed grid.
     """
-    cell_corrections = diagnosis.get("cell_corrections", {})
-    if not cell_corrections:
-        return
-        
-    try:
-        log.info("Opening serial port %s at %d baud...", port, baudrate)
-        ser = serial.Serial(port, baudrate, timeout=1)
-        time.sleep(2) # Wait for Arduino to reset
-        
-        for cell_id, target_kpa in cell_corrections.items():
-            # Standardize cell_id format for Arduino (e.g., "03" or "23")
-            cleaned = str(cell_id).strip("[]() ")
-            parts = cleaned.replace("_", ",").split(",")
-            if len(parts) == 2:
-                r, c = parts[0].strip(), parts[1].strip()
-                formatted_id = f"{r}{c}"
-            else:
-                formatted_id = cleaned
-                
-            cmd = json.dumps({"cell_id": formatted_id, "target_kpa": float(target_kpa)})
-            ser.write((cmd + "\n").encode("utf-8"))
-            log.info("Sent to Arduino: %s", cmd)
-            time.sleep(0.2) # 200ms delay between commands
-            
-        ser.close()
-    except Exception as e:
-        log.warning("Could not send to Arduino on %s: %s", port, e)
+    import asyncio
+
+    final = healed
+    if broadcast is not None:
+        # Emit the started-d frame so the UI can swap from drifted→healing.
+        await broadcast(cells_state_payload(drifted, phase="healing", frame=0))
+
+    for f in range(1, frames + 1):
+        progress = f / float(frames)
+        current_grid = drifted + (healed - drifted) * progress
+        if broadcast is not None:
+            is_final = f == frames
+            await broadcast(
+                cells_state_payload(current_grid, phase="healing", frame=f, final=is_final)
+            )
+            if is_final:
+                await broadcast(
+                    cells_state_payload(healed, phase="healed", frame=frames, final=True)
+                )
+        await asyncio.sleep(frame_interval_s)
+
+    if save_gif_path:
+        try:
+            create_healing_gif(drifted, healed, save_gif_path)
+        except Exception as exc:  # pragma: no cover - cosmetic
+            log.warning("GIF save skipped: %s", exc)
+
+    return final
 
 
-def create_healing_gif(drifted: np.ndarray, healed: np.ndarray, out_path: str = "healing.gif") -> str:
+def create_healing_gif(
+    drifted: np.ndarray,
+    healed: np.ndarray,
+    out_path: str = "healing.gif",
+) -> str:
     """
-    Create an animated GIF showing the 6x6 pressure grid updating cell-by-cell
+    Create an animated GIF showing the 6×6 pressure grid updating cell-by-cell
     from the drifted state back to the target/healed state over 20 frames.
+
+    Used for the static insurance video / README screenshot only.
+    The live UI uses :func:`heal_animated` + WebSocket broadcast instead.
     """
     fig, ax = plt.subplots(figsize=(6, 6))
     fig.patch.set_facecolor("#0a0e14")
@@ -135,9 +221,9 @@ def create_healing_gif(drifted: np.ndarray, healed: np.ndarray, out_path: str = 
     ax.set_xlabel("Column", fontsize=9, color="#94a3b8")
     ax.set_ylabel("Row", fontsize=9, color="#94a3b8")
     ax.tick_params(colors="#64748b", labelsize=8)
-    
+
     im = ax.imshow(drifted, cmap=RYG_CMAP.reversed(), vmin=VMIN, vmax=VMAX)
-    
+
     # Store text objects to update them
     texts = []
     rows, cols = drifted.shape
@@ -146,30 +232,33 @@ def create_healing_gif(drifted: np.ndarray, healed: np.ndarray, out_path: str = 
         for c in range(cols):
             val = drifted[r, c]
             text_color = "#0f172a" if val < 14.0 else "#ffffff"
-            t = ax.text(c, r, f"{val:.1f}", ha="center", va="center", color=text_color, fontsize=10, fontweight="bold")
+            t = ax.text(
+                c, r, f"{val:.1f}",
+                ha="center", va="center",
+                color=text_color, fontsize=10, fontweight="bold",
+            )
             row_texts.append(t)
         texts.append(row_texts)
-        
+
     frames = 20
-    
+
     def update(frame):
-        # Progress from 0.0 to 1.0
         progress = frame / float(frames - 1)
         current_grid = drifted + (healed - drifted) * progress
-        
+
         im.set_array(current_grid)
-        
+
         for r in range(rows):
             for c in range(cols):
                 val = current_grid[r, c]
                 text_color = "#0f172a" if val < 14.0 else "#ffffff"
                 texts[r][c].set_text(f"{val:.1f}")
                 texts[r][c].set_color(text_color)
-                
+
         return [im]
-        
+
     anim = FuncAnimation(fig, update, frames=frames, interval=100, blit=False)
-    
+
     try:
         anim.save(out_path, writer=PillowWriter(fps=10))
         log.info("Saved healing animation -> %s", os.path.abspath(out_path))
@@ -177,5 +266,20 @@ def create_healing_gif(drifted: np.ndarray, healed: np.ndarray, out_path: str = 
         log.error("Failed to save GIF: %s", e)
     finally:
         plt.close(fig)
-        
+
     return os.path.abspath(out_path)
+
+
+def diagnosis_summary(diagnosis: dict[str, Any]) -> dict:
+    """
+    JSON-safe summary of a VLM diagnosis for the inspector panel.
+    """
+    cell_corrections = diagnosis.get("cell_corrections", {})
+    affected = diagnosis.get("affected_cells", [])
+    return {
+        "confidence": float(diagnosis.get("confidence", 0.0)),
+        "explanation": diagnosis.get("explanation", ""),
+        "affected_cells": affected,
+        "cell_corrections": cell_corrections,
+        "n_corrections": len(cell_corrections),
+    }

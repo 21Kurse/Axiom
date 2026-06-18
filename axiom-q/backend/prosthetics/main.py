@@ -9,16 +9,28 @@ Orchestrates the full Phase 1 pipeline in sequence:
     4. healing    → apply VLM-recommended corrections
     5. ledger     → record the full cycle
 
+Phase 2 (v2 slice — all-virtual):
+
+* ``pot_value`` ∈ [0, 1] drives the Qiskit drift magnitude and cell count.
+* Each cycle's cell states are emitted via an async ``broadcast`` hook that
+  forwards to a WebSocket (live mode) — the Three.js frontend tweens its mesh
+  in lockstep with the heal animation.
+
 Run directly:
-    python -m backend.prosthetics.main
+
+    python -m backend.prosthetics.main --mode oneshot [--seed N] [--save-gif]
+    python -m backend.prosthetics.main --mode replay --n-cycles 5
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
-import sys
 import os
+import random
+import sys
+from typing import Awaitable, Callable, Optional
 
 # Ensure the project root is on the path so `backend.*` imports work
 # when running this file directly.
@@ -29,7 +41,13 @@ if _PROJECT_ROOT not in sys.path:
 from backend.prosthetics.telemetry import run_telemetry
 from backend.prosthetics.heatmap import render_heatmap
 from backend.prosthetics.agent import analyze
-from backend.prosthetics.healing import heal, send_to_arduino, create_healing_gif
+from backend.prosthetics.healing import (
+    cells_state_payload,
+    create_healing_gif,
+    diagnosis_summary,
+    heal,
+    heal_animated,
+)
 from backend.prosthetics.ledger import record, print_timeline
 
 logging.basicConfig(
@@ -38,97 +56,219 @@ logging.basicConfig(
 )
 log = logging.getLogger("axiom-q.prosthetics")
 
+# Async-safe broadcast hook used by the live WebSocket path.
+BroadcastFn = Callable[[dict], Awaitable[None]]
 
-async def run_pipeline(
+# Shared output directory for /assets artifacts the frontend may serve.
+OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# ── One cycle ─────────────────────────────────────────────────────────
+async def run_one_cycle(
+    pot_value: float = 0.0,
     t1_factor: float = 0.5,
     phase_factor: float = 0.3,
     seed: int | None = None,
+    broadcast: Optional[BroadcastFn] = None,
+    save_gif: bool = False,
+    frame_interval_s: float = 0.05,
 ) -> dict:
     """
-    Execute the full prosthetics telemetry → healing pipeline.
+    Execute the full prosthetics telemetry → healing pipeline once.
 
     Parameters
     ----------
-    t1_factor : float
-        T1 relaxation severity for the drift noise model (0–1).
-    phase_factor : float
-        Phase-damping severity for the drift noise model (0–1).
+    pot_value : float
+        Limb-shift knob value in ``[0, 1]``. Controls drift magnitude and
+        cell count via :func:`telemetry.inject_drift`.
+    t1_factor, phase_factor : float
+        Noise-model severities (passed through transparently).
     seed : int, optional
-        Random seed for reproducibility.
-
-    Returns
-    -------
-    dict
-        Summary of the pipeline run including paths and status.
+        Random seed (used for both the drift generator and the demo
+        reproducibility — pass ``42`` for judges).
+    broadcast : async callable, optional
+        Awaited with typed event dicts (``status``, ``cell_state``,
+        ``diagnosis``). Frontend WebSocket client consumes these.
+    save_gif : bool
+        Also persist a ``healing.gif`` for the README / insurance video.
+    frame_interval_s : float
+        Per-frame sleep during the heal animation (≈ 20 fps at 0.05).
     """
+    pot_value = max(0.0, min(1.0, float(pot_value)))
+    if broadcast is not None:
+        await broadcast({
+            "type": "status",
+            "phase": "DRIFT_INJECTING",
+            "pot_value": pot_value,
+        })
+
     # ── Step 1: Quantum Telemetry ──────────────────────────────────────
-    log.info("═══ Step 1/5 — Quantum Telemetry Simulation ═══")
-    telemetry = run_telemetry(t1_factor, phase_factor, seed)
+    log.info("═══ Step 1/5 — Quantum Telemetry Simulation (pot=%.2f) ═══", pot_value)
+    telemetry = run_telemetry(t1_factor, phase_factor, seed, pot_value=pot_value)
     target = telemetry["target"]
     drifted = telemetry["drifted"]
     drift_cells = telemetry["drift_cells"]
 
     log.info("  Target grid  : mean=%.2f kPa", target.mean())
     log.info("  Drifted grid : mean=%.2f kPa", drifted.mean())
-    log.info("  Drift cells  : %d cells shifted %s", len(drift_cells), drift_cells)
+    log.info("  Drift cells  : %d cells shifted", len(drift_cells))
+
+    if broadcast is not None:
+        await broadcast(cells_state_payload(drifted, phase="drifted", frame=0))
 
     # ── Step 2: Heatmap Rendering ──────────────────────────────────────
     log.info("═══ Step 2/5 — Heatmap Rendering ═══")
-    out_dir = os.path.dirname(os.path.abspath(__file__))
     heatmap_path = render_heatmap(
         target,
         drifted,
-        out_path=os.path.join(out_dir, "heatmap_noisy.png"),
+        out_path=os.path.join(OUT_DIR, "heatmap_noisy.png"),
     )
     log.info("  Saved heatmap → %s", heatmap_path)
 
+    if broadcast is not None:
+        await broadcast({"type": "heatmap", "path": heatmap_path})
+
     # ── Step 3: VLM Agent Analysis ─────────────────────────────────────
     log.info("═══ Step 3/5 — VLM Agent Analysis ═══")
+    if broadcast is not None:
+        await broadcast({"type": "status", "phase": "DIAGNOSING"})
     diagnosis = await analyze(heatmap_path, drift_cells)
     log.info("  Drift zone     : %s", diagnosis.get("drift_zone", "n/a"))
     log.info("  Affected cells : %s", diagnosis.get("affected_cells", []))
     log.info("  Confidence     : %.2f", float(diagnosis.get("confidence", 0.0)))
 
+    if broadcast is not None:
+        await broadcast({
+            "type": "diagnosis",
+            "data": diagnosis_summary(diagnosis),
+        })
+
     # ── Step 4: Self-Healing ───────────────────────────────────────────
     log.info("═══ Step 4/5 — Self-Healing ═══")
-    healed = heal(drifted, diagnosis)
+    if broadcast is not None:
+        await broadcast({"type": "status", "phase": "HEALING"})
+
+    target_healed = heal(drifted, diagnosis)
+
+    gif_path = None
+    if save_gif:
+        gif_path = os.path.join(OUT_DIR, "healing.gif")
+
+    healed = await heal_animated(
+        drifted,
+        target_healed,
+        broadcast=broadcast,
+        frames=20,
+        frame_interval_s=frame_interval_s,
+        save_gif_path=gif_path,
+    )
     log.info("  Healed grid mean: %.2f kPa", healed.mean())
-    
-    log.info("  [Hero Demo] Sending cell corrections to Arduino via serial...")
-    send_to_arduino(diagnosis)
-    
-    log.info("  [Hero Demo] Generating healing animation GIF...")
-    gif_path = create_healing_gif(drifted, healed, out_path=os.path.join(out_dir, "healing.gif"))
 
     # ── Step 5: Audit Ledger ───────────────────────────────────────────
     log.info("═══ Step 5/5 — Audit Ledger ═══")
     entry = record(target, drifted, drift_cells, diagnosis, healed)
     log.info("  Ledger entry timestamp: %s", entry.get("timestamp"))
 
-    log.info("═══ Pipeline complete ═══")
-    
-    print_timeline()
+    if broadcast is not None:
+        await broadcast({
+            "type": "status",
+            "phase": "READY",
+            "cycle_complete": True,
+        })
 
     return {
+        "pot_value": pot_value,
         "heatmap_path": heatmap_path,
         "healing_gif_path": gif_path,
         "drift_cells": drift_cells,
         "diagnosis": diagnosis,
         "ledger_entry": entry,
+        "target_mean": float(target.mean()),
+        "drifted_mean": float(drifted.mean()),
+        "healed_mean": float(healed.mean()),
     }
 
 
+# ── CLI modes ─────────────────────────────────────────────────────────
+async def run_oneshot(
+    pot_value: float = 0.45,
+    seed: int | None = None,
+    save_gif: bool = False,
+    broadcast: Optional[BroadcastFn] = None,
+) -> dict:
+    """Run a single cycle (judge demo)."""
+    log.info("Running ONESHOT cycle (pot=%.2f, seed=%s)", pot_value, seed)
+    return await run_one_cycle(
+        pot_value=pot_value,
+        seed=seed,
+        broadcast=broadcast,
+        save_gif=save_gif,
+    )
+
+
+async def run_replay(
+    n_cycles: int = 5,
+    base_seed: int = 42,
+    save_gif: bool = False,
+    pot_min: float = 0.30,
+    pot_max: float = 0.85,
+    broadcast: Optional[BroadcastFn] = None,
+) -> list[dict]:
+    """Run N cycles with varying pot values (README demo)."""
+    log.info("Running REPLAY of %d cycles", n_cycles)
+    results = []
+    for i in range(n_cycles):
+        pot = pot_min + (pot_max - pot_min) * (i + 1) / n_cycles
+        seed = base_seed + i
+        result = await run_one_cycle(
+            pot_value=pot,
+            seed=seed,
+            broadcast=broadcast,
+            save_gif=save_gif and i == n_cycles - 1,
+        )
+        results.append(result)
+        print_timeline()
+    return results
+
+
+def _build_argparse() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="QVis prosthetics pipeline runner")
+    p.add_argument(
+        "--mode",
+        choices=["oneshot", "replay", "live-stub"],
+        default="oneshot",
+        help=(
+            "oneshot: single demo cycle. "
+            "replay: N randomized cycles for the README. "
+            "live-stub: assert the live ws bridge is wired (no-op). "
+            "Live mode itself runs from the FastAPI app."
+        ),
+    )
+    p.add_argument("--seed", type=int, default=None, help="RNG seed (use 42 for demo)")
+    p.add_argument("--pot", type=float, default=0.45, help="pot_value ∈ [0,1] for oneshot")
+    p.add_argument("--n-cycles", type=int, default=5, help="cycles for replay mode")
+    p.add_argument("--save-gif", action="store_true", help="write healing.gif artifact")
+    return p
+
+
 def main():
-    """CLI entry point."""
-    result = asyncio.run(run_pipeline())
-    print(f"\n✅ Heatmap saved to: {result['heatmap_path']}")
-    print(f"✅ Healing animation saved to: {result['healing_gif_path']}")
-    print(f"   Drift cells affected: {len(result['drift_cells'])}\n")
-    
-    print("🎥 **INSURANCE POLICY VIDEO INSTRUCTIONS** 🎥")
-    print("Please record the screen and the physical servo moving simultaneously")
-    print("using your phone or a screen recording tool with your webcam.")
-    print("This serves as proof of autonomous adjustment for the patient's insurance ledger.")
+    args = _build_argparse().parse_args()
+
+    if args.mode == "oneshot":
+        result = asyncio.run(run_oneshot(args.pot, args.seed, args.save_gif))
+        print(f"\n✅ Heatmap: {result['heatmap_path']}")
+        print(f"✅ Healing GIF: {result['healing_gif_path'] or '(none — pass --save-gif)'}")
+        print(f"   Drift cells affected: {len(result['drift_cells'])}")
+
+    elif args.mode == "replay":
+        asyncio.run(run_replay(args.n_cycles, args.seed or 42, args.save_gif))
+
+    elif args.mode == "live-stub":
+        print("'live' mode is driven by /ws/prosthetic on the FastAPI app.")
+        print("Start it with:")
+        print("    cd axiom-q")
+        print("    uvicorn backend.main:app --reload")
+        print("Then drag the soft pot slider in the HUD past 0.30.")
 
 
 if __name__ == "__main__":
