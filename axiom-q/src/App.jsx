@@ -12,6 +12,7 @@ const AgentPanel = lazy(() => import("./components/AgentPanel/AgentPanel"));
 
 export default function App() {
   const initWebSocket = useQuantumStore((s) => s.initWebSocket);
+  const initProstheticWebSocket = useQuantumStore((s) => s.initProstheticWebSocket);
   const fetchQubits = useQuantumStore((s) => s.fetchQubits);
   const fetchHealth = useQuantumStore((s) => s.fetchHealth);
 
@@ -19,6 +20,7 @@ export default function App() {
     fetchHealth();
     fetchQubits();
     initWebSocket();
+    initProstheticWebSocket();
 
     const healthInterval = setInterval(fetchHealth, 30000);
     const qubitsInterval = setInterval(fetchQubits, 10000);
@@ -26,7 +28,7 @@ export default function App() {
       clearInterval(healthInterval);
       clearInterval(qubitsInterval);
     };
-  }, [initWebSocket, fetchQubits, fetchHealth]);
+  }, [initWebSocket, initProstheticWebSocket, fetchQubits, fetchHealth]);
 
   return (
     <ErrorBoundary>
@@ -34,23 +36,23 @@ export default function App() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-5">
-          <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr_320px] gap-3 sm:gap-4 lg:gap-5 h-full">
+          <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr_320px] gap-3 sm:gap-4 xl:gap-5 min-h-full">
             {/* PANEL 1: Hardware Controls */}
-            <PanelCard className="min-h-0">
+            <PanelCard>
               <Suspense fallback={<SkeletonPanel />}>
                 <HardwarePanel />
              </Suspense>
            </PanelCard>
 
             {/* PANEL 2: Live Telemetry */}
-            <PanelCard className="min-h-0">
+            <PanelCard>
               <Suspense fallback={<SkeletonPanel />}>
                 <TelemetryPanel />
              </Suspense>
            </PanelCard>
 
             {/* PANEL 3: NVIDIA Ising Agent Console */}
-            <PanelCard className="min-h-0">
+            <PanelCard>
               <Suspense fallback={<SkeletonPanel />}>
                 <AgentPanel />
              </Suspense>

@@ -90,7 +90,7 @@ function JsonInspector() {
   const statusMap = {
     UNCALIBRATED: { label: "IDLE", className: "bg-[rgba(255,255,255,0.08)] text-[#9CA3AF] border-[rgba(255,255,255,0.12)]" },
     CALIBRATING: { label: "STREAMING", className: "bg-[rgba(0,240,255,0.10)] text-[#00F0FF] border-[#00F0FF]/30 animate-pulse" },
-    CALIBRATED: { label: "IDLE", className: "bg-[rgba(255,255,255,0.08)] text-[#9CA3AF] border-[rgba(255,255,255,0.12)]" },
+    CALIBRATED: { label: "COMPLETE", className: "bg-[rgba(0,255,65,0.10)] text-[#00FF41] border-[#00FF41]/30" },
   };
   const derivedStatus = statusMap[systemStatus] || statusMap.UNCALIBRATED;
 
@@ -138,7 +138,7 @@ function JsonInspector() {
             {"\n"}
             {Object.entries(payload.correction_variables).map(([key, val], i, arr) => (
               <span key={key}>
-                <span className="ml-6 text-[#00F0FF]">{key}</span>
+                <span className="ml-6 text-[#00F0FF]">"{key}"</span>
                 <span className="text-slate-600">:</span>
                 <span className={isComplete ? "text-[#00FF41]" : "text-slate-600"}>
                   {val}
